@@ -1,7 +1,16 @@
-// Command saga demonstrates the SAGA compensation pattern. Because handlers
-// run as activities, you write sequential calls with normal Go error handling
-// and invoke compensations on failure — no special SAGA framework needed.
-// Uses struct-based handlers for dependency injection.
+// Command saga demonstrates the SAGA compensation pattern with checkpointing
+// between each step. Each booking runs as its own activity with independent
+// retries. Continue checkpoints state between steps so that if the worker
+// crashes after booking a flight but before booking a hotel, the flight
+// confirmation is preserved and the saga resumes from the hotel step.
+//
+// Compare with Temporal's saga sample:
+// https://github.com/temporalio/samples-go/blob/main/saga/workflow.go
+//
+// In Temporal's model, each step is an activity and the workflow orchestrates
+// them. Here, each step is a handler connected via Continue. The effect is the
+// same — each step is individually retried and state is checkpointed — but
+// the user writes plain Go code without replay-safety constraints.
 package main
 
 import (
@@ -13,7 +22,9 @@ import (
 	"github.com/raymondji/durableroutine/durable"
 )
 
-// --- State ---
+// --- Per-step state types ---
+// Each step carries the original trip details plus accumulated confirmations.
+// Continue checkpoints these between steps.
 
 type TripState struct {
 	TripID      string
@@ -23,6 +34,24 @@ type TripState struct {
 }
 
 func (TripState) Kind() string { return "trip-booking" }
+
+type FlightBookedState struct {
+	TripID             string
+	HotelID            string
+	CarRentalID        string
+	FlightConfirmation string
+}
+
+func (FlightBookedState) Kind() string { return "trip.flight-booked" }
+
+type HotelBookedState struct {
+	TripID             string
+	CarRentalID        string
+	FlightConfirmation string
+	HotelConfirmation  string
+}
+
+func (HotelBookedState) Kind() string { return "trip.hotel-booked" }
 
 // --- Result ---
 
@@ -38,32 +67,55 @@ type TripService struct {
 	// Injected dependencies would go here (e.g., flight/hotel/car API clients).
 }
 
-func (s *TripService) BookTrip(ctx *durable.Context, state TripState) (*durable.Suspend[TripResult], error) {
-	// Step 1: Book flight
+// BookFlight is the entry point. Books a flight and checkpoints the
+// confirmation before proceeding to the hotel.
+func (s *TripService) BookFlight(ctx *durable.Context, state TripState) (*durable.Suspend[TripResult], error) {
 	flightConf, err := s.bookFlight(ctx, state.FlightID)
 	if err != nil {
 		return nil, fmt.Errorf("book flight: %w", err)
 	}
 
-	// Step 2: Book hotel — compensate flight on failure
+	fmt.Printf("trip %s: flight booked (%s)\n", state.TripID, flightConf)
+	return durable.Continue(s.BookHotel, FlightBookedState{
+		TripID:             state.TripID,
+		HotelID:            state.HotelID,
+		CarRentalID:        state.CarRentalID,
+		FlightConfirmation: flightConf,
+	}), nil
+}
+
+// BookHotel runs after the flight confirmation is checkpointed. On failure,
+// compensates the flight booking.
+func (s *TripService) BookHotel(ctx *durable.Context, state FlightBookedState) (*durable.Suspend[TripResult], error) {
 	hotelConf, err := s.bookHotel(ctx, state.HotelID)
 	if err != nil {
-		s.cancelFlight(ctx, flightConf)
+		s.cancelFlight(ctx, state.FlightConfirmation)
 		return nil, fmt.Errorf("book hotel: %w", err)
 	}
 
-	// Step 3: Book car — compensate hotel and flight on failure
+	fmt.Printf("trip %s: hotel booked (%s)\n", state.TripID, hotelConf)
+	return durable.Continue(s.BookCar, HotelBookedState{
+		TripID:             state.TripID,
+		CarRentalID:        state.CarRentalID,
+		FlightConfirmation: state.FlightConfirmation,
+		HotelConfirmation:  hotelConf,
+	}), nil
+}
+
+// BookCar runs after the hotel confirmation is checkpointed. On failure,
+// compensates both hotel and flight bookings.
+func (s *TripService) BookCar(ctx *durable.Context, state HotelBookedState) (*durable.Suspend[TripResult], error) {
 	carConf, err := s.bookCar(ctx, state.CarRentalID)
 	if err != nil {
-		s.cancelHotel(ctx, hotelConf)
-		s.cancelFlight(ctx, flightConf)
+		s.cancelHotel(ctx, state.HotelConfirmation)
+		s.cancelFlight(ctx, state.FlightConfirmation)
 		return nil, fmt.Errorf("book car: %w", err)
 	}
 
-	fmt.Printf("trip %s fully booked\n", state.TripID)
+	fmt.Printf("trip %s: car booked (%s), trip fully booked\n", state.TripID, carConf)
 	return durable.Done(TripResult{
-		FlightConfirmation: flightConf,
-		HotelConfirmation:  hotelConf,
+		FlightConfirmation: state.FlightConfirmation,
+		HotelConfirmation:  state.HotelConfirmation,
 		CarConfirmation:    carConf,
 	}), nil
 }
@@ -107,7 +159,9 @@ func main() {
 	svc := &TripService{}
 
 	w := durable.NewWorker("saga-queue")
-	durable.AddHandler(w, svc.BookTrip, durable.WithRetryPolicy(durable.RetryPolicy{MaxAttempts: 3}))
+	durable.AddHandler(w, svc.BookFlight, durable.WithRetryPolicy(durable.RetryPolicy{MaxAttempts: 3}))
+	durable.AddHandler(w, svc.BookHotel, durable.WithRetryPolicy(durable.RetryPolicy{MaxAttempts: 3}))
+	durable.AddHandler(w, svc.BookCar, durable.WithRetryPolicy(durable.RetryPolicy{MaxAttempts: 3}))
 
 	go func() {
 		if err := w.Start(); err != nil {
@@ -118,7 +172,7 @@ func main() {
 
 	client := durable.NewClient()
 
-	h, err := durable.Start(client, ctx, "trip-789", svc.BookTrip, TripState{
+	h, err := durable.Start(client, ctx, "trip-789", svc.BookFlight, TripState{
 		TripID:      "TRIP-789",
 		FlightID:    "FL-100",
 		HotelID:     "HT-200",
