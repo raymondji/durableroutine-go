@@ -23,3 +23,18 @@ The error state handler should take the exact same inputs as the original state 
 Please pay attention to handler registration and make sure all the keys we generate are unique.
 
 Then use the error state handler in the SAGA example to implement compensations.
+
+## Update the docs to discuss what this project was inspired by and compare them
+
+Inspirations:
+- Temporal
+- Elixir Genserver
+- Go's native goroutines & channels
+- Riverqueue for type safety ergonomics around invoking handlers
+
+Compare concepts (send, call, get result, etc.) with:
+- Temporal
+- Elixir Genserver
+- Go's native goroutines & channels
+
+The comparison should help people who are familiar with those other projects to quickly get an intuition on how stateroutine works.
