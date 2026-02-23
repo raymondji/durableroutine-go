@@ -12,14 +12,6 @@ type HandlerState interface {
 	Kind() string
 }
 
-// RoutineArgs is the interface that routine input types must implement.
-// Kind returns a stable string that identifies the routine type, used as the
-// Temporal workflow type. This decouples the routine's identity from Go type
-// names, allowing safe renames across deploys.
-type RoutineArgs interface {
-	HandlerState
-}
-
 // Message is the interface that all message and request types must implement.
 // Kind returns a stable string used as the Temporal signal/update/query name
 // and as part of the handler registration key. This decouples routing from
@@ -32,14 +24,14 @@ type Message interface {
 
 // HandlerFunc is a function that receives state and returns a Suspend
 // describing what the routine should wait for next.
-// Return Done() to complete the routine.
-type HandlerFunc[State HandlerState] func(ctx *Context, state State) (*Suspend, error)
+// Return Done(result) to complete the routine.
+type HandlerFunc[State HandlerState, Result any] func(ctx *Context, state State) (*Suspend[Result], error)
 
 // CastFunc handles a fire-and-forget message (Signal).
-type CastFunc[State HandlerState, M Message] func(ctx *Context, state State, msg M) (*Suspend, error)
+type CastFunc[State HandlerState, M Message, Result any] func(ctx *Context, state State, msg M) (*Suspend[Result], error)
 
 // CallFunc handles a synchronous request-response (Update).
-type CallFunc[State HandlerState, Req Message, Resp any] func(ctx *Context, state State, req Req) (Resp, *Suspend, error)
+type CallFunc[State HandlerState, Req Message, Resp any, Result any] func(ctx *Context, state State, req Req) (Resp, *Suspend[Result], error)
 
 // QueryFunc handles a synchronous read-only query (Query).
 type QueryFunc[State HandlerState, Req Message, Resp any] func(ctx *Context, state State, req Req) (Resp, error)
@@ -60,28 +52,23 @@ func addEntry(w *Worker, key string, handler any, opts []HandlerOption) {
 	w.handlers[key] = handlerEntry{handler: handler, retryPolicy: o.retryPolicy}
 }
 
-// AddRoutineHandler registers a handler function for a routine type identified
-// by Args.Kind(). Panics if a handler is already registered for the same kind.
-func AddRoutineHandler[Args RoutineArgs](w *Worker, handler HandlerFunc[Args], opts ...HandlerOption) {
-	var zero Args
-	addEntry(w, "routine:"+zero.Kind(), handler, opts)
-}
-
-// AddHandler registers a HandlerFunc for a state Kind.
-func AddHandler[S HandlerState](w *Worker, h HandlerFunc[S], opts ...HandlerOption) {
+// AddHandler registers a HandlerFunc keyed by state Kind.
+// Any HandlerFunc can serve as a routine entry point (via Start) or as a
+// continuation target (via After, Continue, Default, OnTimer).
+func AddHandler[S HandlerState, T any](w *Worker, h HandlerFunc[S, T], opts ...HandlerOption) {
 	var zero S
 	addEntry(w, "handler:"+zero.Kind(), h, opts)
 }
 
 // AddCastHandler registers a CastFunc keyed by state Kind and message Kind.
-func AddCastHandler[S HandlerState, M Message](w *Worker, h CastFunc[S, M], opts ...HandlerOption) {
+func AddCastHandler[S HandlerState, M Message, T any](w *Worker, h CastFunc[S, M, T], opts ...HandlerOption) {
 	var zeroS S
 	var zeroM M
 	addEntry(w, "cast:"+zeroS.Kind()+":"+zeroM.Kind(), h, opts)
 }
 
 // AddCallHandler registers a CallFunc keyed by state Kind and request Kind.
-func AddCallHandler[S HandlerState, Req Message, Resp any](w *Worker, h CallFunc[S, Req, Resp], opts ...HandlerOption) {
+func AddCallHandler[S HandlerState, Req Message, Resp any, T any](w *Worker, h CallFunc[S, Req, Resp, T], opts ...HandlerOption) {
 	var zeroS S
 	var zeroReq Req
 	addEntry(w, "call:"+zeroS.Kind()+":"+zeroReq.Kind(), h, opts)

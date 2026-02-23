@@ -13,13 +13,27 @@ import (
 	"github.com/raymondji/durableroutine/durable"
 )
 
-// --- Args ---
+// --- Per-step state types ---
+// Each step has its own state type with a unique Kind, even though they
+// carry the same data. This is how the runtime distinguishes handlers.
 
-type ReminderArgs struct {
+type InitialState struct {
 	Email string
 }
 
-func (ReminderArgs) Kind() string { return "reminder" }
+func (InitialState) Kind() string { return "reminder.initial" }
+
+type FollowUpState struct {
+	Email string
+}
+
+func (FollowUpState) Kind() string { return "reminder.follow-up" }
+
+type FinalState struct {
+	Email string
+}
+
+func (FinalState) Kind() string { return "reminder.final" }
 
 // --- Service struct ---
 
@@ -27,19 +41,19 @@ type ReminderService struct {
 	// Injected dependencies would go here (e.g., email client).
 }
 
-func (s *ReminderService) Handle(ctx *durable.Context, args ReminderArgs) (*durable.Suspend, error) {
-	fmt.Printf("sending initial email to %s\n", args.Email)
-	return durable.After(24*time.Hour, s.SendFollowUp, args), nil
+func (s *ReminderService) SendInitial(ctx *durable.Context, state InitialState) (*durable.Suspend[durable.Unit], error) {
+	fmt.Printf("sending initial email to %s\n", state.Email)
+	return durable.After(24*time.Hour, s.SendFollowUp, FollowUpState{Email: state.Email}), nil
 }
 
-func (s *ReminderService) SendFollowUp(ctx *durable.Context, args ReminderArgs) (*durable.Suspend, error) {
-	fmt.Printf("sending follow-up email to %s\n", args.Email)
-	return durable.After(7*24*time.Hour, s.SendFinal, args), nil
+func (s *ReminderService) SendFollowUp(ctx *durable.Context, state FollowUpState) (*durable.Suspend[durable.Unit], error) {
+	fmt.Printf("sending follow-up email to %s\n", state.Email)
+	return durable.After(7*24*time.Hour, s.SendFinal, FinalState{Email: state.Email}), nil
 }
 
-func (s *ReminderService) SendFinal(ctx *durable.Context, args ReminderArgs) (*durable.Suspend, error) {
-	fmt.Printf("sending final email to %s\n", args.Email)
-	return durable.Done(), nil
+func (s *ReminderService) SendFinal(ctx *durable.Context, state FinalState) (*durable.Suspend[durable.Unit], error) {
+	fmt.Printf("sending final email to %s\n", state.Email)
+	return durable.Done(durable.Unit{}), nil
 }
 
 // --- main ---
@@ -50,7 +64,7 @@ func main() {
 	svc := &ReminderService{}
 
 	w := durable.NewWorker("reminder-queue")
-	durable.AddRoutineHandler(w, svc.Handle)
+	durable.AddHandler(w, svc.SendInitial)
 	durable.AddHandler(w, svc.SendFollowUp)
 	durable.AddHandler(w, svc.SendFinal)
 
@@ -62,8 +76,8 @@ func main() {
 	defer w.Stop()
 
 	client := durable.NewClient()
-	if err := durable.Start(client, ctx, "reminder-user-42",
-		ReminderArgs{Email: "user@example.com"}); err != nil {
+	if _, err := durable.Start(client, ctx, "reminder-user-42",
+		svc.SendInitial, InitialState{Email: "user@example.com"}); err != nil {
 		log.Fatal(err)
 	}
 

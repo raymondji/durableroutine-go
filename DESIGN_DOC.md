@@ -35,7 +35,7 @@ Each durable routine is an actor with a mailbox. Communication follows actor mod
 |---|---|---|---|---|
 | `OnCast` | Signal | No (fire-and-forget) | Yes | Yes |
 | `OnCall` | Update | Yes (waits for response) | Yes | Yes |
-| `OnQuery` | Query | Yes (instant response) | No (value semantics) | No |
+| `SetQueryHandler` | Query | Yes (instant response) | No (value semantics) | No |
 | `OnTimer` | Timer | N/A | Yes | Yes |
 
 **Rules:**
@@ -49,6 +49,9 @@ Each durable routine is an actor with a mailbox. Communication follows actor mod
 There is **no shared state type `S`** across handlers. Each handler declares its own state type. State flows forward explicitly through Suspend cases:
 
 ```go
+type BookingState struct { UserID, ItemID string }
+func (BookingState) Kind() string { return "booking" }
+
 type ReservedState struct { UserID, ItemID string }
 func (ReservedState) Kind() string { return "booking.reserved" }
 
@@ -57,18 +60,25 @@ func (PaymentInfo) Kind() string { return "payment" }
 
 type BookingService struct { /* injected deps */ }
 
-func (s *BookingService) Handle(ctx *durable.Context, args BookingArgs) (*durable.Suspend, error) {
-    reserved := ReservedState{UserID: args.UserID, ItemID: args.ItemID}
-    return durable.Select(
+type BookingResult struct { Status string }
+
+func (s *BookingService) ReserveItem(ctx *durable.Context, state BookingState) (*durable.Suspend[BookingResult], error) {
+    reserved := ReservedState{UserID: state.UserID, ItemID: state.ItemID}
+    durable.SetQueryHandler(ctx, s.GetStatus, reserved)
+    return durable.Select[BookingResult](
         durable.OnCast(s.ProcessPayment, reserved),
     ), nil
 }
 
-func (s *BookingService) ProcessPayment(ctx *durable.Context, state ReservedState, msg PaymentInfo) (*durable.Suspend, error) {
+func (s *BookingService) ProcessPayment(ctx *durable.Context, state ReservedState, msg PaymentInfo) (*durable.Suspend[BookingResult], error) {
     paid := PaidState{UserID: state.UserID, ItemID: state.ItemID, PaymentID: "PAY-123"}
-    return durable.Select(
+    return durable.Select[BookingResult](
         durable.OnCast(s.ProcessShipping, paid),
     ), nil
+}
+
+func (s *BookingService) ProcessShipping(ctx *durable.Context, state PaidState, msg ShippingInfo) (*durable.Suspend[BookingResult], error) {
+    return durable.Done(BookingResult{Status: "shipped"}), nil
 }
 ```
 
@@ -80,8 +90,7 @@ The API is defined in the [`durable/`](durable/) package:
 
 #### Interfaces
 
-- **`HandlerState`** — interface with `Kind() string`, implemented by all handler state types
-- **`RoutineArgs`** — embeds `HandlerState`, identifies the routine type (Temporal workflow type)
+- **`HandlerState`** — interface with `Kind() string`, implemented by all handler state types. There is no separate "routine args" interface — any `HandlerState` can serve as a routine entry point via `Start`.
 - **`Message`** — interface with `Kind() string`, implemented by all message and request types. The `Kind()` string is used as the Temporal signal/update/query name and as part of the handler registration key.
 
 #### Options
@@ -93,47 +102,49 @@ The API is defined in the [`durable/`](durable/) package:
 
 Because Go does not allow type parameters on methods, these are package-level functions that take `*Worker`. All accept `...HandlerOption`:
 
-- **`AddRoutineHandler[Args](w, handler)`** — registers a HandlerFunc for a routine kind
-- **`AddHandler[S](w, handler)`** — registers a HandlerFunc keyed by `handler:{state.Kind()}`
+- **`AddHandler[S](w, handler)`** — registers a HandlerFunc keyed by `handler:{state.Kind()}`. Any handler registered this way can serve as both a routine entry point (via `Start`) and a continuation target (via `After`, `Continue`, `Default`, `OnTimer`).
 - **`AddCastHandler[S, M](w, handler)`** — registers a CastFunc keyed by `cast:{state.Kind()}:{msg.Kind()}`
 - **`AddCallHandler[S, Req, Resp](w, handler)`** — registers a CallFunc keyed by `call:{state.Kind()}:{req.Kind()}`
 - **`AddQueryHandler[S, Req, Resp](w, handler)`** — registers a QueryFunc keyed by `query:{state.Kind()}:{req.Kind()}`
 
 #### Handler Signatures
 
-`State` is constrained to `HandlerState`. `M` and `Req` are constrained to `Message`:
+`State` is constrained to `HandlerState`. `M` and `Req` are constrained to `Message`. `Result` is the routine's result type, returned via `Done(result)` and retrieved via `Handle[T].Get`:
 
-- **`HandlerFunc[State]`** — `func(ctx *Context, state State) (*Suspend, error)`
-- **`CastFunc[State, M]`** — `func(ctx *Context, state State, msg M) (*Suspend, error)`
-- **`CallFunc[State, Req, Resp]`** — `func(ctx *Context, state State, req Req) (Resp, *Suspend, error)`
-- **`QueryFunc[State, Req, Resp]`** — `func(ctx *Context, state State, req Req) (Resp, error)`
+- **`HandlerFunc[State, Result]`** — `func(ctx *Context, state State) (*Suspend[Result], error)`
+- **`CastFunc[State, M, Result]`** — `func(ctx *Context, state State, msg M) (*Suspend[Result], error)`
+- **`CallFunc[State, Req, Resp, Result]`** — `func(ctx *Context, state State, req Req) (Resp, *Suspend[Result], error)`
+- **`QueryFunc[State, Req, Resp]`** — `func(ctx *Context, state State, req Req) (Resp, error)` (no Result — queries don't advance state)
 
-#### Suspend Constructors
+#### Suspend and Constructors
 
-All constructors except `OnQuery` and `Select` accept `...CaseOption` for per-case retry policy overrides. Signal/update/query names are derived from `M.Kind()` / `Req.Kind()` — no descriptor types needed:
+`Suspend[T]` is generic over the routine's result type `T`. All handlers in a routine return `*Suspend[T]`. Use `Unit` for routines with no meaningful result.
 
-- **`After(duration, handler, state, ...CaseOption)`** — suspend until a timer fires
-- **`Select(cases...)`** — wait for the first of several events
-- **`Continue(handler, state, ...CaseOption)`** — checkpoint state and immediately invoke handler (no waiting)
+- **`Done[T](result T)`** — complete the routine with a typed result. Clients retrieve it via `Handle[T].Get`.
+- **`After(duration, handler, state, ...CaseOption)`** — suspend until a timer fires. `T` inferred from handler.
+- **`Select[T](cases...)`** — wait for the first of several events (OnCast, OnCall, OnTimer, Default). `T` must be specified explicitly.
+- **`Continue(handler, state, ...CaseOption)`** — checkpoint state and immediately invoke handler (no waiting). `T` inferred from handler.
 - **`OnTimer(duration, handler, state, ...CaseOption)`** — a timer case for use inside Select
 - **`OnCast(handler, state, ...CaseOption)`** — fires when a Cast message arrives (inbox name = `M.Kind()`)
 - **`OnCall(handler, state, ...CaseOption)`** — fires when a client calls a method (method name = `Req.Kind()`)
-- **`OnQuery(handler, state)`** — fires when a client queries (query name = `Req.Kind()`, no retry — runs in workflow context)
 - **`Default(handler, state, ...CaseOption)`** — a case for use inside Select that fires immediately if no other cases are ready (maps to `sel.AddDefault()`)
 
 #### Context
 
 - **`Context`** — wraps `context.Context` with routine capabilities
 - **`ctx.RoutineID()`** — get the current routine's ID (reply address for children)
-- **`ctx.Spawn(id, args)`** — spawn a child routine (args.Kind() determines handler)
+- **`ctx.Spawn(id, state)`** — spawn a child routine (state.Kind() determines handler)
 - **`Cast[M](ctx, routineID, msg)`** — send a fire-and-forget message to another routine (inbox name = `msg.Kind()`)
+- **`SetQueryHandler[S, Req, Resp](ctx, handler, state)`** — register a query handler that persists across state transitions. Takes effect after the current handler returns its Suspend. Replaces any existing handler for the same `Req.Kind()`. Query handlers run concurrently with the routine (read-only, no state machine advancement). Maps to a Temporal Query handler.
 
 #### Client (typed top-level functions)
 
-- **`Start[Args](client, ctx, id, args)`** — start a new routine instance (args.Kind() determines handler)
+- **`Start[S, T](client, ctx, id, handler, state)`** — start a new routine instance (state.Kind() determines handler). The handler function is passed for Go type inference of the result type `T`. If `id` is empty, a random UUID is generated. Returns a typed `Handle[T]`.
+- **`Handle[T].Get(ctx)`** — blocks until the routine completes and returns the typed result. Maps to Temporal's `WorkflowRun.Get`.
 - **`ClientCast[M](client, ctx, id, msg)`** — fire-and-forget message to a routine (inbox name = `msg.Kind()`)
-- **`ClientCall[S, Req, Resp](client, ctx, id, handler, req)`** — synchronous request-response. The handler function is passed for Go type inference of `Resp` (not called).
+- **`ClientCall[S, Req, Resp, T](client, ctx, id, handler, req)`** — synchronous request-response. The handler function is passed for Go type inference of `Resp` (not called).
 - **`ClientQuery[S, Req, Resp](client, ctx, id, handler, req)`** — synchronous read-only query. The handler function is passed for Go type inference of `Resp` (not called).
+- **`ClientGet[T](client, ctx, id)`** — blocks until the routine completes and returns the typed result. Useful when you only have a routine ID (e.g., from config or database) and not a `Handle`.
 
 #### Worker
 
@@ -144,7 +155,7 @@ All constructors except `OnQuery` and `Select` accept `...CaseOption` for per-ca
 See the [`examples/`](examples/) directory:
 
 - **[`examples/reminder/`](examples/reminder/main.go)** — Timer chain with per-handler state. Demonstrates `After` for simple timer-based progression.
-- **[`examples/order/`](examples/order/main.go)** — Order lifecycle with Cast + timer + Query. Demonstrates `OnCast`, `OnQuery`, `OnTimer`, and `Select`.
+- **[`examples/order/`](examples/order/main.go)** — Order lifecycle with Cast + timer + Query. Demonstrates `OnCast`, `SetQueryHandler`, `OnTimer`, and `Select`.
 - **[`examples/booking/`](examples/booking/main.go)** — Multi-step client-driven routine with Cast + Call + Query. Client sends payment/shipping info via `ClientCast`, can cancel via `ClientCall`, and check status via `ClientQuery`.
 - **[`examples/fanout/`](examples/fanout/main.go)** — Fan-out/fan-in using child routines and routine-to-routine Cast. Parent spawns children via `ctx.Spawn`, children send results back via `durable.Cast`. Parent collects via `OnCast`.
 - **[`examples/pipeline/`](examples/pipeline/main.go)** — Producer-consumer pipeline. Producer sends items to consumer via `durable.Cast`. Consumer processes items one at a time via `OnCast`.
@@ -156,9 +167,9 @@ See the [`examples/`](examples/) directory:
 | Pattern | Suspension-based approach |
 |---|---|
 | **Do something, sleep, do something** | Handler does work, returns `After(duration, nextHandler, state)`. Each handler is an activity. See [`examples/reminder/`](examples/reminder/main.go). |
-| **Wait for one of several events** | Handler returns `Select(OnCast(...), OnCall(...), OnQuery(...), OnTimer(...))`. The runtime sets up a Temporal selector. See [`examples/order/`](examples/order/main.go). |
-| **Fan-out / fan-in** | Parent spawns children via `ctx.Spawn(id, args)`. Each child calls `durable.Cast(ctx, parentID, result)` to send results back. Parent collects via `OnCast`, one at a time. See [`examples/fanout/`](examples/fanout/main.go). |
-| **Producer-consumer** | Producer calls `durable.Cast` in a loop to send items. Consumer uses `Select(OnCast(handleItem, state), OnCast(handleDone, state))` to process items and detect completion. See [`examples/pipeline/`](examples/pipeline/main.go). |
+| **Wait for one of several events** | Handler returns `Select(OnCast(...), OnCall(...), OnTimer(...))`. The runtime sets up a Temporal selector. Query handlers are registered separately via `SetQueryHandler`. See [`examples/order/`](examples/order/main.go). |
+| **Fan-out / fan-in** | Parent spawns children via `ctx.Spawn(id, state)`. Each child calls `durable.Cast(ctx, parentID, result)` to send results back. Parent collects via `OnCast`, one at a time. See [`examples/fanout/`](examples/fanout/main.go). |
+| **Producer-consumer** | Producer calls `durable.Cast` in a loop to send items. Consumer uses `Select(OnCast(receiveItem, state), OnCast(receiveDone, state))` to process items and detect completion. See [`examples/pipeline/`](examples/pipeline/main.go). |
 | **SAGA compensation** | Handler calls services sequentially; on error, calls compensation. All normal Go error handling. See [`examples/saga/`](examples/saga/main.go). |
 | **Checkpoint and continue** | Handler does expensive work, returns `Continue(nextHandler, state)`. The runtime checkpoints state (continue-as-new boundary) and immediately invokes the next handler without waiting. |
 | **Cancellable batch processing** | Process items in chunks. Between chunks, return `Select(OnCast(cancelHandler, state), Default(nextChunkHandler, state))`. If a cancel signal is pending it fires; otherwise Default continues to the next chunk. See [`examples/batch/`](examples/batch/main.go). |
@@ -172,8 +183,8 @@ Each routine maps to a single Temporal workflow. The workflow function is entire
 
 ```
 RoutineWorkflow(ctx, routineID):
-    state = args (deserialized from workflow input)
-    handler = registered handler for args.Kind()
+    state = initial state (deserialized from workflow input)
+    handler = registered handler for state.Kind()
 
     loop:
         // Run the handler as an activity
@@ -214,16 +225,18 @@ RoutineWorkflow(ctx, routineID):
                     resp, suspend, err = executeActivity(case.handler, case.state, req)
                     return resp, err
                 })
-            if case.query (OnQuery):
-                // Register a Query handler (read-only, no activity needed)
-                workflow.SetQueryHandler(ctx, case.queryName, func(req) (resp, error) {
-                    return case.handler(case.state, req)
-                })
         sel.Select(ctx)
+
+        // Apply query handlers registered via SetQueryHandler during the activity.
+        // These persist across state transitions until overridden.
+        for each qh in ctx.queryHandlers:
+            workflow.SetQueryHandler(ctx, qh.queryName, func(req) (resp, error) {
+                return qh.handler(qh.state, req)
+            })
 
         // Handle child spawns from ctx.Spawn calls
         for each spawn in ctx.spawnRequests:
-            workflow.ExecuteChildWorkflow(ctx, spawn.args.Kind(), spawn.args)
+            workflow.ExecuteChildWorkflow(ctx, spawn.state.Kind(), spawn.state)
 
         // Check continue-as-new
         if shouldContinueAsNew():
@@ -237,7 +250,7 @@ Key implementation details:
 - **Continue-as-new is trivial** — serialize current state and handler identifier, restart the loop
 - **Signal → OnCast**: buffered Temporal signals dispatched to the matching inbox handler
 - **Update → OnCall**: Temporal update handler runs the call handler as an activity, returns response
-- **Query → OnQuery**: Temporal query handler runs synchronously in workflow context (read-only)
+- **Query → SetQueryHandler**: Temporal query handler runs synchronously in workflow context (read-only). Registered via `SetQueryHandler` on Context, persists across state transitions until overridden.
 
 #### Automatic Continue-As-New
 
@@ -256,8 +269,10 @@ Because the workflow is a simple loop (run activity → interpret suspend → re
 - The workflow code is 100% library-owned — user code changes never break replay
 - Simple mental model: handler runs → returns what to wait for → runtime waits → next handler runs
 - Type-safe messages — message types self-identify via `Kind()`, handler functions provide type inference for `ClientCall`/`ClientQuery`
+- Type-safe results — `Suspend[T]` enforces that all handlers in a routine agree on the result type at compile time. `Start` returns a typed `Handle[T]` so `Get` requires no manual type specification. `Done(result)` and `Handle[T].Get` are both typed.
 - Call/Cast/Query maps cleanly to Temporal's Update/Signal/Query primitives
-- River-style registration: args types self-identify via `Kind()`, handlers registered at startup
+- Uniform handler model — no distinction between "routine entry point" and "continuation handler". Any `HandlerFunc` registered with `AddHandler` can serve as either.
+- River-style registration: state types self-identify via `Kind()`, handlers registered at startup
 
 **Disadvantages:**
 - No linear top-to-bottom code for multi-step sequences — each step is a separate handler function connected via `After`. This is more verbose than `sleep(); doNext()` but eliminates the checkpointing problem entirely.
@@ -271,4 +286,4 @@ Because the workflow is a simple loop (run activity → interpret suspend → re
 2. **State size limits**: Temporal has payload size limits (~2MB default). Large state may need external storage.
 3. **Testing**: Should support a local/in-memory mode for unit testing without a Temporal server.
 4. **Observability**: How do we expose Temporal's native visibility (search attributes, workflow status) through the abstraction?
-5. ~~**Handler identification for continue-as-new**: Need a strategy for identifying handler functions across continue-as-new boundaries (function names, registration, etc.).~~ **Resolved**: All state types implement `HandlerState` (`Kind() string`). Handlers are registered in a flat map with composite keys (`routine:{kind}`, `handler:{kind}`, `cast:{state.Kind()}:{msg.Kind()}`, `call:{state.Kind()}:{req.Kind()}`, `query:{state.Kind()}:{req.Kind()}`). Each `Case` carries a `handlerKey` for runtime lookup after continue-as-new.
+5. ~~**Handler identification for continue-as-new**: Need a strategy for identifying handler functions across continue-as-new boundaries (function names, registration, etc.).~~ **Resolved**: All state types implement `HandlerState` (`Kind() string`). Handlers are registered in a flat map with composite keys (`handler:{kind}`, `cast:{state.Kind()}:{msg.Kind()}`, `call:{state.Kind()}:{req.Kind()}`, `query:{state.Kind()}:{req.Kind()}`). Each `Case` carries a `handlerKey` for runtime lookup after continue-as-new.

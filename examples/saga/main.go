@@ -13,16 +13,24 @@ import (
 	"github.com/raymondji/durableroutine/durable"
 )
 
-// --- Args ---
+// --- State ---
 
-type TripArgs struct {
+type TripState struct {
 	TripID      string
 	FlightID    string
 	HotelID     string
 	CarRentalID string
 }
 
-func (TripArgs) Kind() string { return "trip-booking" }
+func (TripState) Kind() string { return "trip-booking" }
+
+// --- Result ---
+
+type TripResult struct {
+	FlightConfirmation string
+	HotelConfirmation  string
+	CarConfirmation    string
+}
 
 // --- Service struct ---
 
@@ -30,30 +38,34 @@ type TripService struct {
 	// Injected dependencies would go here (e.g., flight/hotel/car API clients).
 }
 
-func (s *TripService) Handle(ctx *durable.Context, args TripArgs) (*durable.Suspend, error) {
+func (s *TripService) BookTrip(ctx *durable.Context, state TripState) (*durable.Suspend[TripResult], error) {
 	// Step 1: Book flight
-	flightConf, err := s.bookFlight(ctx, args.FlightID)
+	flightConf, err := s.bookFlight(ctx, state.FlightID)
 	if err != nil {
 		return nil, fmt.Errorf("book flight: %w", err)
 	}
 
 	// Step 2: Book hotel — compensate flight on failure
-	hotelConf, err := s.bookHotel(ctx, args.HotelID)
+	hotelConf, err := s.bookHotel(ctx, state.HotelID)
 	if err != nil {
 		s.cancelFlight(ctx, flightConf)
 		return nil, fmt.Errorf("book hotel: %w", err)
 	}
 
 	// Step 3: Book car — compensate hotel and flight on failure
-	_, err = s.bookCar(ctx, args.CarRentalID)
+	carConf, err := s.bookCar(ctx, state.CarRentalID)
 	if err != nil {
 		s.cancelHotel(ctx, hotelConf)
 		s.cancelFlight(ctx, flightConf)
 		return nil, fmt.Errorf("book car: %w", err)
 	}
 
-	fmt.Printf("trip %s fully booked\n", args.TripID)
-	return durable.Done(), nil
+	fmt.Printf("trip %s fully booked\n", state.TripID)
+	return durable.Done(TripResult{
+		FlightConfirmation: flightConf,
+		HotelConfirmation:  hotelConf,
+		CarConfirmation:    carConf,
+	}), nil
 }
 
 // --- Service calls (replace with real API clients) ---
@@ -95,7 +107,7 @@ func main() {
 	svc := &TripService{}
 
 	w := durable.NewWorker("saga-queue")
-	durable.AddRoutineHandler(w, svc.Handle, durable.WithRetryPolicy(durable.RetryPolicy{MaxAttempts: 3}))
+	durable.AddHandler(w, svc.BookTrip, durable.WithRetryPolicy(durable.RetryPolicy{MaxAttempts: 3}))
 
 	go func() {
 		if err := w.Start(); err != nil {
@@ -106,14 +118,21 @@ func main() {
 
 	client := durable.NewClient()
 
-	if err := durable.Start(client, ctx, "trip-789", TripArgs{
+	h, err := durable.Start(client, ctx, "trip-789", svc.BookTrip, TripState{
 		TripID:      "TRIP-789",
 		FlightID:    "FL-100",
 		HotelID:     "HT-200",
 		CarRentalID: "CR-300",
-	}); err != nil {
+	})
+	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Println("trip booking started")
+	// Wait for the trip booking to complete.
+	result, err := h.Get(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("trip booked: flight=%s hotel=%s car=%s\n",
+		result.FlightConfirmation, result.HotelConfirmation, result.CarConfirmation)
 }

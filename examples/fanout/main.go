@@ -23,13 +23,13 @@ import (
 
 // --- Child routine ---
 
-type ItemArgs struct {
+type ItemState struct {
 	ID       string
 	Data     string
 	ParentID string
 }
 
-func (ItemArgs) Kind() string { return "process-item" }
+func (ItemState) Kind() string { return "process-item" }
 
 // --- Messages ---
 
@@ -42,21 +42,27 @@ func (ItemResult) Kind() string { return "results" }
 
 // --- Parent routine ---
 
-type BatchArgs struct {
+type FanoutState struct {
 	Items []struct {
 		ID   string
 		Data string
 	}
 }
 
-func (BatchArgs) Kind() string { return "fanout" }
+func (FanoutState) Kind() string { return "fanout" }
 
-type FanoutState struct {
+// --- Results ---
+
+type FanoutResult struct {
+	Results []ItemResult
+}
+
+type CollectingState struct {
 	Pending int
 	Results []ItemResult
 }
 
-func (FanoutState) Kind() string { return "fanout.collecting" }
+func (CollectingState) Kind() string { return "fanout.collecting" }
 
 // --- Service struct ---
 
@@ -64,26 +70,26 @@ type FanoutService struct {
 	// Injected dependencies would go here.
 }
 
-func (s *FanoutService) Handle(ctx *durable.Context, args BatchArgs) (*durable.Suspend, error) {
+func (s *FanoutService) SpawnItems(ctx *durable.Context, state FanoutState) (*durable.Suspend[FanoutResult], error) {
 	parentID := ctx.RoutineID()
 
-	for _, item := range args.Items {
+	for _, item := range state.Items {
 		ctx.Spawn(fmt.Sprintf("item-%s", item.ID),
-			ItemArgs{ID: item.ID, Data: item.Data, ParentID: parentID})
+			ItemState{ID: item.ID, Data: item.Data, ParentID: parentID})
 	}
 
-	state := FanoutState{Pending: len(args.Items)}
-	return durable.Select(
-		durable.OnCast(s.CollectResult, state),
+	collecting := CollectingState{Pending: len(state.Items)}
+	return durable.Select[FanoutResult](
+		durable.OnCast(s.CollectResult, collecting),
 	), nil
 }
 
-func (s *FanoutService) CollectResult(ctx *durable.Context, state FanoutState, result ItemResult) (*durable.Suspend, error) {
+func (s *FanoutService) CollectResult(ctx *durable.Context, state CollectingState, result ItemResult) (*durable.Suspend[FanoutResult], error) {
 	state.Results = append(state.Results, result)
 	state.Pending--
 
 	if state.Pending > 0 {
-		return durable.Select(
+		return durable.Select[FanoutResult](
 			durable.OnCast(s.CollectResult, state),
 		), nil
 	}
@@ -93,7 +99,7 @@ func (s *FanoutService) CollectResult(ctx *durable.Context, state FanoutState, r
 	for _, r := range state.Results {
 		fmt.Printf("  %s: %s\n", r.ID, r.Output)
 	}
-	return durable.Done(), nil
+	return durable.Done(FanoutResult{Results: state.Results}), nil
 }
 
 // --- Item processor service ---
@@ -102,17 +108,17 @@ type ItemService struct {
 	// Injected dependencies would go here.
 }
 
-func (s *ItemService) Handle(ctx *durable.Context, args ItemArgs) (*durable.Suspend, error) {
+func (s *ItemService) ProcessItem(ctx *durable.Context, state ItemState) (*durable.Suspend[durable.Unit], error) {
 	result := ItemResult{
-		ID:     args.ID,
-		Output: fmt.Sprintf("processed: %s", args.Data),
+		ID:     state.ID,
+		Output: fmt.Sprintf("processed: %s", state.Data),
 	}
 
 	// Send result back to the parent — like ch <- result.
-	if err := durable.Cast(ctx, args.ParentID, result); err != nil {
+	if err := durable.Cast(ctx, state.ParentID, result); err != nil {
 		return nil, fmt.Errorf("send result: %w", err)
 	}
-	return durable.Done(), nil
+	return durable.Done(durable.Unit{}), nil
 }
 
 // --- main ---
@@ -124,8 +130,8 @@ func main() {
 	itemSvc := &ItemService{}
 
 	w := durable.NewWorker("fanout-queue")
-	durable.AddRoutineHandler(w, fanoutSvc.Handle)
-	durable.AddRoutineHandler(w, itemSvc.Handle)
+	durable.AddHandler(w, fanoutSvc.SpawnItems)
+	durable.AddHandler(w, itemSvc.ProcessItem)
 	durable.AddCastHandler(w, fanoutSvc.CollectResult)
 
 	go func() {
@@ -137,7 +143,7 @@ func main() {
 
 	client := durable.NewClient()
 
-	if err := durable.Start(client, ctx, "batch-001", BatchArgs{
+	h, err := durable.Start(client, ctx, "batch-001", fanoutSvc.SpawnItems, FanoutState{
 		Items: []struct {
 			ID   string
 			Data string
@@ -146,9 +152,15 @@ func main() {
 			{ID: "2", Data: "bar"},
 			{ID: "3", Data: "baz"},
 		},
-	}); err != nil {
+	})
+	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Println("fanout started, children processing items")
+	// Wait for all children to complete and get collected results.
+	result, err := h.Get(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("fanout complete: %d results\n", len(result.Results))
 }
