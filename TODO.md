@@ -22,7 +22,9 @@ Not sure if any changes are needed for this
 
 Some possible ideas:
 1. Make the names of the methods like SpawnAsync or BufferSpawn
-2. Make the names of the 
+2. Change the return signature to something like Suspend(Select(..), Spawn(...), Cast(...))
+
+Please explore these and other options before proceeding.
 
 ## Add support for defining an error state handler on RetryPolicy
 
