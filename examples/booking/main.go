@@ -84,7 +84,7 @@ func (s *BookingService) Handle(ctx *durable.Context, args BookingArgs) (*durabl
 		durable.OnCast(s.ProcessPayment, reserved),
 		durable.OnCall(s.HandleCancel, reserved),
 		durable.OnQuery(s.GetReservedStatus, reserved),
-		durable.AfterFunc(15*time.Minute, s.HandleReservationTimeout, reserved),
+		durable.OnTimer(15*time.Minute, s.HandleReservationTimeout, reserved),
 	), nil
 }
 
@@ -94,7 +94,7 @@ func (s *BookingService) ProcessPayment(ctx *durable.Context, state ReservedStat
 	return durable.Select(
 		durable.OnCast(s.ProcessShipping, paid),
 		durable.OnQuery(s.GetPaidStatus, paid),
-		durable.AfterFunc(24*time.Hour, s.HandleShippingTimeout, paid),
+		durable.OnTimer(24*time.Hour, s.HandleShippingTimeout, paid),
 	), nil
 }
 
@@ -119,12 +119,12 @@ func (s *BookingService) HandleCancel(ctx *durable.Context, _ ReservedState, _ C
 
 func (s *BookingService) HandleReservationTimeout(ctx *durable.Context, _ ReservedState) (*durable.Suspend, error) {
 	fmt.Println("reservation expired, no payment received")
-	return nil, nil
+	return durable.Done(), nil
 }
 
 func (s *BookingService) HandleShippingTimeout(ctx *durable.Context, _ PaidState) (*durable.Suspend, error) {
 	fmt.Println("shipping info not provided in time, refunding payment")
-	return nil, nil
+	return durable.Done(), nil
 }
 
 // --- main ---
@@ -136,8 +136,8 @@ func main() {
 
 	w := durable.NewWorker("booking-queue")
 	durable.AddRoutineHandler(w, svc.Handle, durable.WithRetryPolicy(durable.RetryPolicy{MaxAttempts: 5}))
-	durable.AddCastHandler(w, svc.ProcessPayment)
-	durable.AddCastHandler(w, svc.ProcessShipping)
+	durable.AddCastHandler(w, svc.ProcessPayment, durable.WithRetryPolicy(durable.RetryPolicy{MaxAttempts: 3}))
+	durable.AddCastHandler(w, svc.ProcessShipping, durable.WithRetryPolicy(durable.RetryPolicy{MaxAttempts: 3}))
 	durable.AddCallHandler(w, svc.HandleCancel)
 	durable.AddQueryHandler(w, svc.GetReservedStatus)
 	durable.AddQueryHandler(w, svc.GetPaidStatus)

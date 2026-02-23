@@ -36,7 +36,7 @@ Each durable routine is an actor with a mailbox. Communication follows actor mod
 | `OnCast` | Signal | No (fire-and-forget) | Yes | Yes |
 | `OnCall` | Update | Yes (waits for response) | Yes | Yes |
 | `OnQuery` | Query | Yes (instant response) | No (value semantics) | No |
-| `AfterFunc` | Timer | N/A | Yes | Yes |
+| `OnTimer` | Timer | N/A | Yes | Yes |
 
 **Rules:**
 - Cast (Signal): fire-and-forget, never blocks. Clients and routines can Cast.
@@ -115,7 +115,7 @@ All constructors except `OnQuery` and `Select` accept `...CaseOption` for per-ca
 - **`After(duration, handler, state, ...CaseOption)`** — suspend until a timer fires
 - **`Select(cases...)`** — wait for the first of several events
 - **`Continue(handler, state, ...CaseOption)`** — checkpoint state and immediately invoke handler (no waiting)
-- **`AfterFunc(duration, handler, state, ...CaseOption)`** — a timer case for use inside Select
+- **`OnTimer(duration, handler, state, ...CaseOption)`** — a timer case for use inside Select
 - **`OnCast(handler, state, ...CaseOption)`** — fires when a Cast message arrives (inbox name = `M.Kind()`)
 - **`OnCall(handler, state, ...CaseOption)`** — fires when a client calls a method (method name = `Req.Kind()`)
 - **`OnQuery(handler, state)`** — fires when a client queries (query name = `Req.Kind()`, no retry — runs in workflow context)
@@ -144,7 +144,7 @@ All constructors except `OnQuery` and `Select` accept `...CaseOption` for per-ca
 See the [`examples/`](examples/) directory:
 
 - **[`examples/reminder/`](examples/reminder/main.go)** — Timer chain with per-handler state. Demonstrates `After` for simple timer-based progression.
-- **[`examples/order/`](examples/order/main.go)** — Order lifecycle with Cast + timer + Query. Demonstrates `OnCast`, `OnQuery`, `AfterFunc`, and `Select`.
+- **[`examples/order/`](examples/order/main.go)** — Order lifecycle with Cast + timer + Query. Demonstrates `OnCast`, `OnQuery`, `OnTimer`, and `Select`.
 - **[`examples/booking/`](examples/booking/main.go)** — Multi-step client-driven routine with Cast + Call + Query. Client sends payment/shipping info via `ClientCast`, can cancel via `ClientCall`, and check status via `ClientQuery`.
 - **[`examples/fanout/`](examples/fanout/main.go)** — Fan-out/fan-in using child routines and routine-to-routine Cast. Parent spawns children via `ctx.Spawn`, children send results back via `durable.Cast`. Parent collects via `OnCast`.
 - **[`examples/pipeline/`](examples/pipeline/main.go)** — Producer-consumer pipeline. Producer sends items to consumer via `durable.Cast`. Consumer processes items one at a time via `OnCast`.
@@ -156,7 +156,7 @@ See the [`examples/`](examples/) directory:
 | Pattern | Suspension-based approach |
 |---|---|
 | **Do something, sleep, do something** | Handler does work, returns `After(duration, nextHandler, state)`. Each handler is an activity. See [`examples/reminder/`](examples/reminder/main.go). |
-| **Wait for one of several events** | Handler returns `Select(OnCast(...), OnCall(...), OnQuery(...), AfterFunc(...))`. The runtime sets up a Temporal selector. See [`examples/order/`](examples/order/main.go). |
+| **Wait for one of several events** | Handler returns `Select(OnCast(...), OnCall(...), OnQuery(...), OnTimer(...))`. The runtime sets up a Temporal selector. See [`examples/order/`](examples/order/main.go). |
 | **Fan-out / fan-in** | Parent spawns children via `ctx.Spawn(id, args)`. Each child calls `durable.Cast(ctx, parentID, result)` to send results back. Parent collects via `OnCast`, one at a time. See [`examples/fanout/`](examples/fanout/main.go). |
 | **Producer-consumer** | Producer calls `durable.Cast` in a loop to send items. Consumer uses `Select(OnCast(handleItem, state), OnCast(handleDone, state))` to process items and detect completion. See [`examples/pipeline/`](examples/pipeline/main.go). |
 | **SAGA compensation** | Handler calls services sequentially; on error, calls compensation. All normal Go error handling. See [`examples/saga/`](examples/saga/main.go). |

@@ -67,7 +67,7 @@ func (s *OrderService) Handle(ctx *durable.Context, _ OrderArgs) (*durable.Suspe
 	return durable.Select(
 		durable.OnCast(s.HandlePlace, PendingState{}),
 		durable.OnQuery(s.QueryPendingStatus, PendingState{}),
-		durable.AfterFunc(30*time.Minute, s.HandleTimeout, PendingState{}),
+		durable.OnTimer(30*time.Minute, s.HandleTimeout, PendingState{}),
 	), nil
 }
 
@@ -78,7 +78,7 @@ func (s *OrderService) HandlePlace(ctx *durable.Context, _ PendingState, req Pla
 	return durable.Select(
 		durable.OnCast(s.HandleCancel, placed),
 		durable.OnQuery(s.QueryPlacedStatus, placed),
-		durable.AfterFunc(24*time.Hour, s.HandleShip, placed),
+		durable.OnTimer(24*time.Hour, s.HandleShip, placed),
 	), nil
 }
 

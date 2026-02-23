@@ -49,19 +49,25 @@ type Case struct {
 // handler with the provided state. This is the simple "sleep then continue" primitive.
 func After[S HandlerState](d time.Duration, handler HandlerFunc[S], state S, opts ...CaseOption) *Suspend {
 	return &Suspend{
-		cases: []Case{AfterFunc(d, handler, state, opts...)},
+		cases: []Case{OnTimer(d, handler, state, opts...)},
 	}
 }
 
 // Select builds a Suspend that waits for the first of several cases to fire,
 // similar to Go's select statement.
+//
+// This prioritizes cases in the following way:
+// 1. Queries (caller is blocking, read-only, should be very fast)
+// 2. Calls (caller is blocking, may modify state, should be fast)
+// 3. Casts and Timers
+// 4. Default (if present, runs if no other cases are ready)
 func Select(cases ...Case) *Suspend {
 	return &Suspend{cases: cases}
 }
 
-// AfterFunc returns a Case that fires after the given duration.
+// OnTimer returns a Case that fires after the given duration.
 // Use this inside a Select when you want a timer alongside other cases.
-func AfterFunc[S HandlerState](d time.Duration, handler HandlerFunc[S], state S, opts ...CaseOption) Case {
+func OnTimer[S HandlerState](d time.Duration, handler HandlerFunc[S], state S, opts ...CaseOption) Case {
 	o := applyOpts(opts)
 	return Case{
 		timerDuration: &d,
