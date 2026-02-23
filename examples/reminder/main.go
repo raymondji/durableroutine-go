@@ -1,4 +1,4 @@
-// Command reminder demonstrates a simple durable routine that sends a
+// Command reminder demonstrates a simple durable stateroutine that sends a
 // sequence of emails with durable sleeps between them.
 // Uses struct-based handlers for dependency injection.
 // Each handler declares its own state type — state flows forward via After().
@@ -64,9 +64,9 @@ func main() {
 	svc := &ReminderService{}
 
 	w := stateroutine.NewWorker("reminder-queue")
-	stateroutine.AddHandler(w, svc.SendInitial, stateroutine.ErrorPolicy{})
-	stateroutine.AddHandler(w, svc.SendFollowUp, stateroutine.ErrorPolicy{})
-	stateroutine.AddHandler(w, svc.SendFinal, stateroutine.ErrorPolicy{})
+	stateroutine.AddHandler(w, svc.SendInitial, stateroutine.HandlerOptions{})
+	stateroutine.AddHandler(w, svc.SendFollowUp, stateroutine.HandlerOptions{})
+	stateroutine.AddHandler(w, svc.SendFinal, stateroutine.HandlerOptions{})
 
 	go func() {
 		if err := w.Start(); err != nil {

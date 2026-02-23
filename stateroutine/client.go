@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// Client starts and interacts with durable routines.
+// Client starts and interacts with durable stateroutines.
 // Methods are unexported because callers use the typed top-level
 // wrapper functions (Start, ClientSend, ClientCall, ClientQuery, ClientGet).
 type Client interface {
@@ -23,7 +23,7 @@ func NewClient() Client {
 	panic("not implemented")
 }
 
-// Handle is a typed reference to a running routine. It is returned by Start
+// Handle is a typed reference to a running stateroutine. It is returned by Start
 // and carries the result type T so that Get does not require manual type
 // specification.
 type Handle[T any] struct {
@@ -31,7 +31,7 @@ type Handle[T any] struct {
 	id     string
 }
 
-// Get retrieves the result of the routine. Blocks until the routine completes.
+// Get retrieves the result of the stateroutine. Blocks until the stateroutine completes.
 // Maps to Temporal's WorkflowRun.Get.
 func (h Handle[T]) Get(ctx context.Context) (T, error) {
 	raw, err := h.client.get(ctx, h.id)
@@ -42,7 +42,7 @@ func (h Handle[T]) Get(ctx context.Context) (T, error) {
 	return raw.(T), nil
 }
 
-// Start begins a new instance of a routine. The state.Kind() determines which
+// Start begins a new instance of a stateroutine. The state.Kind() determines which
 // registered handler runs (looked up by "handler:{kind}"). The handler
 // parameter is used only for type inference of the result type T — it is not
 // called. Pass the same function registered with AddHandler.
@@ -61,13 +61,13 @@ func Start[S HandlerState, T any](c Client, ctx context.Context, id string, hand
 	return Handle[T]{client: c, id: id}, nil
 }
 
-// ClientSend sends a fire-and-forget message to a routine's inbox.
+// ClientSend sends a fire-and-forget message to a stateroutine's inbox.
 // The inbox name is derived from msg.Kind().
 func ClientSend[M Message](c Client, ctx context.Context, id string, msg M) error {
 	return c.send(ctx, id, msg.Kind(), msg)
 }
 
-// ClientCall sends a synchronous request to a routine's method and waits
+// ClientCall sends a synchronous request to a stateroutine's method and waits
 // for the response. The method name is derived from req.Kind(). The handler
 // parameter is used only for type inference of the response type — it is not
 // called. Pass the same function registered with AddCallHandler.
@@ -81,7 +81,7 @@ func ClientCall[S HandlerState, Req Message, Resp any, T any](c Client, ctx cont
 	return raw.(Resp), nil
 }
 
-// ClientQuery retrieves a static query result from a routine.
+// ClientQuery retrieves a static query result from a stateroutine.
 // The query name is derived from resp.Kind(). Pass a zero value of the
 // response type for routing and type inference.
 func ClientQuery[Resp Message](c Client, ctx context.Context, id string, resp Resp) (Resp, error) {
@@ -93,9 +93,9 @@ func ClientQuery[Resp Message](c Client, ctx context.Context, id string, resp Re
 	return raw.(Resp), nil
 }
 
-// ClientGet retrieves the result of a completed routine by ID. Blocks until
-// the routine completes. Prefer using Handle.Get when you have a Handle from
-// Start. This function is useful when you only have the routine ID (e.g.,
+// ClientGet retrieves the result of a completed stateroutine by ID. Blocks until
+// the stateroutine completes. Prefer using Handle.Get when you have a Handle from
+// Start. This function is useful when you only have the stateroutine ID (e.g.,
 // from a config or database). Maps to Temporal's WorkflowRun.Get.
 func ClientGet[T any](c Client, ctx context.Context, id string) (T, error) {
 	raw, err := c.get(ctx, id)

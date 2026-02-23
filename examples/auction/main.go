@@ -5,7 +5,7 @@
 //
 // Also demonstrates OnCallTerminalError: if bid processing fails after all
 // retries, the terminal error handler returns an error response to the blocked
-// caller instead of failing the entire routine.
+// caller instead of failing the entire stateroutine.
 //
 // This shows the key difference between Send and Call:
 //   - Send (fire-and-forget): the caller doesn't wait for a response.
@@ -183,10 +183,11 @@ func main() {
 	svc := &AuctionService{}
 
 	w := stateroutine.NewWorker("auction-queue")
-	stateroutine.AddHandler(w, svc.OpenAuction, stateroutine.ErrorPolicy{})
-	stateroutine.AddCallHandler(w, svc.PlaceBid, stateroutine.ErrorPolicy{MaxAttempts: 3},
-		svc.BidFailed)
-	stateroutine.AddHandler(w, svc.CloseAuction, stateroutine.ErrorPolicy{})
+	stateroutine.AddHandler(w, svc.OpenAuction, stateroutine.HandlerOptions{})
+	stateroutine.AddCallHandler(w, svc.PlaceBid, stateroutine.HandlerOptions{
+		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
+	}).OnTerminalError(svc.BidFailed)
+	stateroutine.AddHandler(w, svc.CloseAuction, stateroutine.HandlerOptions{})
 
 	go func() {
 		if err := w.Start(); err != nil {

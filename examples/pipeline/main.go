@@ -1,5 +1,5 @@
 // Command pipeline demonstrates a producer-consumer pattern between two
-// durable routines. The producer generates items one at a time and sends
+// durable stateroutines. The producer generates items one at a time and sends
 // each to the consumer via stateroutine.Send — exactly like a goroutine
 // writing to a channel:
 //
@@ -9,7 +9,7 @@
 //	    process(item)
 //	}
 //
-// The producer and consumer are fully independent durable routines. Either
+// The producer and consumer are fully independent durable stateroutines. Either
 // can crash and resume without losing messages (Temporal signals are durable).
 // Uses struct-based handlers for dependency injection.
 package main
@@ -39,7 +39,7 @@ func (DoneMsg) Kind() string { return "done" }
 
 type ProducerState struct {
 	Items             []string
-	ConsumerRoutineID string
+	ConsumerStateroutineID string
 }
 
 func (ProducerState) Kind() string { return "producer" }
@@ -66,13 +66,13 @@ type ProducerService struct {
 func (s *ProducerService) Produce(ctx *stateroutine.Context, state ProducerState) (*stateroutine.Suspend[stateroutine.Unit], error) {
 	for i, data := range state.Items {
 		item := Item{Seq: i, Data: data}
-		if err := stateroutine.Send(ctx, state.ConsumerRoutineID, item); err != nil {
+		if err := stateroutine.Send(ctx, state.ConsumerStateroutineID, item); err != nil {
 			return nil, fmt.Errorf("send item %d: %w", i, err)
 		}
 		fmt.Printf("produced item %d: %s\n", i, data)
 	}
 
-	if err := stateroutine.Send(ctx, state.ConsumerRoutineID, DoneMsg{}); err != nil {
+	if err := stateroutine.Send(ctx, state.ConsumerStateroutineID, DoneMsg{}); err != nil {
 		return nil, fmt.Errorf("send done: %w", err)
 	}
 	fmt.Println("producer finished")
@@ -116,10 +116,10 @@ func main() {
 	consumerSvc := &ConsumerService{}
 
 	w := stateroutine.NewWorker("pipeline-queue")
-	stateroutine.AddHandler(w, producerSvc.Produce, stateroutine.ErrorPolicy{})
-	stateroutine.AddHandler(w, consumerSvc.StartConsumer, stateroutine.ErrorPolicy{})
-	stateroutine.AddSendHandler(w, consumerSvc.ReceiveItem, stateroutine.ErrorPolicy{})
-	stateroutine.AddSendHandler(w, consumerSvc.ReceiveDone, stateroutine.ErrorPolicy{})
+	stateroutine.AddHandler(w, producerSvc.Produce, stateroutine.HandlerOptions{})
+	stateroutine.AddHandler(w, consumerSvc.StartConsumer, stateroutine.HandlerOptions{})
+	stateroutine.AddSendHandler(w, consumerSvc.ReceiveItem, stateroutine.HandlerOptions{})
+	stateroutine.AddSendHandler(w, consumerSvc.ReceiveDone, stateroutine.HandlerOptions{})
 
 	go func() {
 		if err := w.Start(); err != nil {
@@ -140,7 +140,7 @@ func main() {
 	// Start the producer, pointing it at the consumer.
 	if _, err := stateroutine.Start(client, ctx, "producer-1", producerSvc.Produce, ProducerState{
 		Items:             []string{"alpha", "bravo", "charlie", "delta"},
-		ConsumerRoutineID: "consumer-1",
+		ConsumerStateroutineID: "consumer-1",
 	}); err != nil {
 		log.Fatal(err)
 	}

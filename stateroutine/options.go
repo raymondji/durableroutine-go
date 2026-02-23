@@ -2,16 +2,24 @@ package stateroutine
 
 import "time"
 
-// ErrorPolicy configures retry and error handling behavior for handler activities.
+// RetryPolicy configures retry behavior for handler activities.
 // Fields map to Temporal's native retry policy and activity timeout options.
-// When all retries are exhausted and a terminal error handler is registered,
-// the terminal error handler is invoked instead of failing the routine.
-type ErrorPolicy struct {
+// When all retries are exhausted and a terminal error handler is registered
+// (via OnTerminalError on the registration), the terminal error handler is
+// invoked instead of failing the stateroutine.
+type RetryPolicy struct {
 	MaxAttempts            int
 	InitialInterval        time.Duration
 	MaxInterval            time.Duration
 	BackoffCoefficient     float64
 	StartToCloseTimeout    time.Duration
 	ScheduleToCloseTimeout time.Duration
-	onTerminalErrorKey     string // set internally by addEntry; looked up in worker handlers
+}
+
+// HandlerOptions configures behavior for a registered handler.
+// RetryPolicy controls retry and timeout settings.
+// Use HandlerOptions{} for Temporal defaults.
+type HandlerOptions struct {
+	RetryPolicy        RetryPolicy
+	onTerminalErrorKey string // set internally by OnTerminalError; looked up in worker handlers
 }

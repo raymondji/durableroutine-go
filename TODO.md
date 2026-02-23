@@ -1,4 +1,40 @@
-# TODOs to implement
+# TODO
+
+## How do we make it more clear that spawning/casting to other stateroutines within a stateroutine handler does not happen immediately?
+
+Some possible ideas:
+1. Make the names of the methods like SpawnAsync or BufferSpawn
+2. Change the return signature to something like Suspend(Select(..), Spawn(...), Cast(...))
+
+Please explore these and other options before proceeding.
+
+## Make ClientSend / ClientCall take in a function param
+
+Just like how Start does. 
+
+## Instead of having to define Kind() methods on most types, explore using reflection instead
+
+Instead of a manual Kind(), just use reflection get the name of the struct.
+
+What are the tradeoffs here?
+
+## Create a plan for how to implement this API using Temporal
+
+Write this to DESIGN_DOC_TEMPORAL_IMPL.md
+
+Make sure the implementation code is sectioned off from the core API, e.g. in a separate package
+
+## Create a plan for how to implement this API in-memory for testing purposes
+
+Write this to DESIGN_DOC_IN_MEMORY_IMPL.md
+
+Make sure the implementation code is sectioned off from the core API, e.g. in a separate package
+
+## Convert each of the examples to be both 1. runnable code samples and 2. executable tests
+
+We should exercise the tests against all implementations.
+
+# DONE
 
 ## Change how Queries behave. Instead of SetQueryHandler, we should do SetQueryResult.
 
@@ -18,17 +54,9 @@ A portmanteau of "state machine" + "goroutine"
 
 Not sure if any changes are needed for this
 
-## How do we make it more clear that spawning/casting to other Routines within a Routine handler does not happen immediately?
-
-Some possible ideas:
-1. Make the names of the methods like SpawnAsync or BufferSpawn
-2. Change the return signature to something like Suspend(Select(..), Spawn(...), Cast(...))
-
-Please explore these and other options before proceeding.
-
 ## Add support for defining an error state handler on RetryPolicy
 
-By default, after all retries are exhausted, the entire Routine fails.
+By default, after all retries are exhausted, the entire stateroutine fails.
 
 However I want to add support for saying, once all retries are exhausted, transition to this error state handler instead.
 

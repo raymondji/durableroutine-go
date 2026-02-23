@@ -2,18 +2,18 @@ package stateroutine
 
 import "context"
 
-// Context provides durable routine capabilities to handler functions.
+// Context provides durable stateroutine capabilities to handler functions.
 type Context struct {
 	context.Context
 
-	routineID     string
-	spawnRequests []spawnRequest
-	queryResults  []queryEntry
+	stateroutineID string
+	spawnRequests  []spawnRequest
+	queryResults   []queryEntry
 }
 
 type spawnRequest struct {
-	routineID string
-	state     HandlerState
+	stateroutineID string
+	state          HandlerState
 }
 
 // queryEntry stores a static query result keyed by the response's Kind().
@@ -22,26 +22,26 @@ type queryEntry struct {
 	result    any
 }
 
-// RoutineID returns the current routine's unique identifier.
-func (c *Context) RoutineID() string {
-	return c.routineID
+// StateroutineID returns the current stateroutine's unique identifier.
+func (c *Context) StateroutineID() string {
+	return c.stateroutineID
 }
 
-// Spawn requests that a child routine be started when the current handler
-// completes. The child runs as an independent durable routine (Temporal child
+// Spawn requests that a child stateroutine be started when the current handler
+// completes. The child runs as an independent durable stateroutine (Temporal child
 // workflow). The state.Kind() determines which registered handler runs.
-func (c *Context) Spawn(routineID string, state HandlerState) {
+func (c *Context) Spawn(stateroutineID string, state HandlerState) {
 	c.spawnRequests = append(c.spawnRequests, spawnRequest{
-		routineID: routineID,
-		state:     state,
+		stateroutineID: stateroutineID,
+		state:          state,
 	})
 }
 
-// Send sends a fire-and-forget message to another routine's inbox.
+// Send sends a fire-and-forget message to another stateroutine's inbox.
 // The inbox name is derived from msg.Kind(). It can be called from within
-// any handler to communicate with other running routines.
+// any handler to communicate with other running stateroutines.
 // Maps to a Temporal Signal.
-func Send[M Message](ctx *Context, routineID string, msg M) error {
+func Send[M Message](ctx *Context, stateroutineID string, msg M) error {
 	panic("not implemented")
 }
 

@@ -1,4 +1,4 @@
-// Command order demonstrates a durable routine that waits for messages
+// Command order demonstrates a durable stateroutine that waits for messages
 // using Select/OnSend, modelling an order lifecycle with Send + timer + Query.
 // Uses struct-based handlers for dependency injection.
 package main
@@ -110,11 +110,11 @@ func main() {
 	svc := &OrderService{}
 
 	w := stateroutine.NewWorker("order-queue")
-	stateroutine.AddHandler(w, svc.CreateOrder, stateroutine.ErrorPolicy{})
-	stateroutine.AddSendHandler(w, svc.PlaceOrder, stateroutine.ErrorPolicy{})
-	stateroutine.AddSendHandler(w, svc.CancelOrder, stateroutine.ErrorPolicy{})
-	stateroutine.AddHandler(w, svc.ShipOrder, stateroutine.ErrorPolicy{})
-	stateroutine.AddHandler(w, svc.ExpireOrder, stateroutine.ErrorPolicy{})
+	stateroutine.AddHandler(w, svc.CreateOrder, stateroutine.HandlerOptions{})
+	stateroutine.AddSendHandler(w, svc.PlaceOrder, stateroutine.HandlerOptions{})
+	stateroutine.AddSendHandler(w, svc.CancelOrder, stateroutine.HandlerOptions{})
+	stateroutine.AddHandler(w, svc.ShipOrder, stateroutine.HandlerOptions{})
+	stateroutine.AddHandler(w, svc.ExpireOrder, stateroutine.HandlerOptions{})
 
 	go func() {
 		if err := w.Start(); err != nil {
@@ -145,7 +145,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Wait for the routine to complete and get the result.
+	// Wait for the stateroutine to complete and get the result.
 	result, err := h.Get(ctx)
 	if err != nil {
 		log.Fatal(err)

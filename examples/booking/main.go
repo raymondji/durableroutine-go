@@ -1,11 +1,11 @@
-// Command booking demonstrates a multi-step routine where the client drives
+// Command booking demonstrates a multi-step stateroutine where the client drives
 // each step by sending typed messages. Shows Send + Call + Query together
 // with struct-based dependency injection.
 // Per-step state: BookingState → ReservedState → PaidState.
 //
 // Also demonstrates OnSendTerminalError: if payment processing fails after
 // all retries, the terminal error handler releases the reservation instead
-// of failing the entire routine.
+// of failing the entire stateroutine.
 package main
 
 import (
@@ -146,13 +146,18 @@ func main() {
 	svc := &BookingService{}
 
 	w := stateroutine.NewWorker("booking-queue")
-	stateroutine.AddHandler(w, svc.ReserveItem, stateroutine.ErrorPolicy{MaxAttempts: 5})
-	stateroutine.AddSendHandler(w, svc.ProcessPayment, stateroutine.ErrorPolicy{MaxAttempts: 3},
-		svc.PaymentFailed)
-	stateroutine.AddSendHandler(w, svc.ProcessShipping, stateroutine.ErrorPolicy{MaxAttempts: 3})
-	stateroutine.AddCallHandler(w, svc.CancelBooking, stateroutine.ErrorPolicy{})
-	stateroutine.AddHandler(w, svc.ExpireReservation, stateroutine.ErrorPolicy{})
-	stateroutine.AddHandler(w, svc.ExpireShipping, stateroutine.ErrorPolicy{})
+	stateroutine.AddHandler(w, svc.ReserveItem, stateroutine.HandlerOptions{
+		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 5},
+	})
+	stateroutine.AddSendHandler(w, svc.ProcessPayment, stateroutine.HandlerOptions{
+		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
+	}).OnTerminalError(svc.PaymentFailed)
+	stateroutine.AddSendHandler(w, svc.ProcessShipping, stateroutine.HandlerOptions{
+		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
+	})
+	stateroutine.AddCallHandler(w, svc.CancelBooking, stateroutine.HandlerOptions{})
+	stateroutine.AddHandler(w, svc.ExpireReservation, stateroutine.HandlerOptions{})
+	stateroutine.AddHandler(w, svc.ExpireShipping, stateroutine.HandlerOptions{})
 
 	go func() {
 		if err := w.Start(); err != nil {
@@ -163,7 +168,7 @@ func main() {
 
 	client := stateroutine.NewClient()
 
-	// Start the booking routine.
+	// Start the booking stateroutine.
 	h, err := stateroutine.Start(client, ctx, "booking-123", svc.ReserveItem,
 		BookingState{UserID: "user-42", ItemID: "SKU-900"})
 	if err != nil {
@@ -194,7 +199,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Wait for the routine to complete and get the result.
+	// Wait for the stateroutine to complete and get the result.
 	result, err := h.Get(ctx)
 	if err != nil {
 		log.Fatal(err)

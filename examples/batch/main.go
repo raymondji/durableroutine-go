@@ -1,5 +1,5 @@
 // Command batch demonstrates chunked processing of a large dataset using
-// Continue for checkpointing. This pattern keeps the routine responsive to
+// Continue for checkpointing. This pattern keeps the stateroutine responsive to
 // signals between chunks — like a GenServer that processes a batch and then
 // checks its mailbox before continuing:
 //
@@ -13,8 +13,8 @@
 // chunks, the workflow loop runs — checking for pending signals, handling
 // continue-as-new if history is large, and spawning any requested children.
 //
-// The routine also listens for a cancel signal. If a CancelInbox message
-// arrives between chunks, the routine stops early and reports partial
+// The stateroutine also listens for a cancel signal. If a CancelInbox message
+// arrives between chunks, the stateroutine stops early and reports partial
 // progress. This is only possible because Continue yields control back
 // to the workflow loop between chunks.
 package main
@@ -140,9 +140,9 @@ func main() {
 	svc := &BatchService{}
 
 	w := stateroutine.NewWorker("batch-queue")
-	stateroutine.AddHandler(w, svc.StartBatch, stateroutine.ErrorPolicy{})
-	stateroutine.AddHandler(w, svc.ProcessChunk, stateroutine.ErrorPolicy{})
-	stateroutine.AddSendHandler(w, svc.CancelBatch, stateroutine.ErrorPolicy{})
+	stateroutine.AddHandler(w, svc.StartBatch, stateroutine.HandlerOptions{})
+	stateroutine.AddHandler(w, svc.ProcessChunk, stateroutine.HandlerOptions{})
+	stateroutine.AddSendHandler(w, svc.CancelBatch, stateroutine.HandlerOptions{})
 
 	go func() {
 		if err := w.Start(); err != nil {

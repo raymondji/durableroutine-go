@@ -2,8 +2,8 @@ package stateroutine
 
 import "time"
 
-// Suspend describes what a routine should wait for before invoking the next
-// handler. T is the routine's result type, returned via Done and retrieved
+// Suspend describes what a stateroutine should wait for before invoking the next
+// handler. T is the stateroutine's result type, returned via Done and retrieved
 // via ClientGet. It is an opaque value built via Done, After, Select, etc.
 type Suspend[T any] struct {
 	done   bool
@@ -11,10 +11,10 @@ type Suspend[T any] struct {
 	cases  []Case
 }
 
-// Unit is a convenience type for routines that don't produce a result.
+// Unit is a convenience type for stateroutines that don't produce a result.
 type Unit struct{}
 
-// Done returns a Suspend that completes the routine with the given result.
+// Done returns a Suspend that completes the stateroutine with the given result.
 // Clients can retrieve the result via ClientGet.
 func Done[T any](result T) *Suspend[T] {
 	return &Suspend[T]{done: true, result: result}

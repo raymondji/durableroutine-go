@@ -1,5 +1,5 @@
-// Command fanout demonstrates fan-out/fan-in using child routines and
-// routine-to-routine Send, mirroring goroutines and channels:
+// Command fanout demonstrates fan-out/fan-in using child stateroutines and
+// stateroutine-to-stateroutine Send, mirroring goroutines and channels:
 //
 //	ch := make(chan Result)
 //	for _, item := range items {
@@ -7,7 +7,7 @@
 //	}
 //	for range items { results = append(results, <-ch) }
 //
-// Each child runs as its own durable routine (Temporal child workflow) with
+// Each child runs as its own durable stateroutine (Temporal child workflow) with
 // independent retries, timeouts, and event history. Children send results
 // back to the parent via stateroutine.Send — like writing to a channel.
 // Uses struct-based handlers for dependency injection.
@@ -21,7 +21,7 @@ import (
 	"github.com/raymondji/stateroutine/stateroutine"
 )
 
-// --- Child routine ---
+// --- Child stateroutine ---
 
 type ItemState struct {
 	ID       string
@@ -40,7 +40,7 @@ type ItemResult struct {
 
 func (ItemResult) Kind() string { return "results" }
 
-// --- Parent routine ---
+// --- Parent stateroutine ---
 
 type FanoutState struct {
 	Items []struct {
@@ -71,7 +71,7 @@ type FanoutService struct {
 }
 
 func (s *FanoutService) SpawnItems(ctx *stateroutine.Context, state FanoutState) (*stateroutine.Suspend[FanoutResult], error) {
-	parentID := ctx.RoutineID()
+	parentID := ctx.StateroutineID()
 
 	for _, item := range state.Items {
 		ctx.Spawn(fmt.Sprintf("item-%s", item.ID),
@@ -130,9 +130,9 @@ func main() {
 	itemSvc := &ItemService{}
 
 	w := stateroutine.NewWorker("fanout-queue")
-	stateroutine.AddHandler(w, fanoutSvc.SpawnItems, stateroutine.ErrorPolicy{})
-	stateroutine.AddHandler(w, itemSvc.ProcessItem, stateroutine.ErrorPolicy{})
-	stateroutine.AddSendHandler(w, fanoutSvc.CollectResult, stateroutine.ErrorPolicy{})
+	stateroutine.AddHandler(w, fanoutSvc.SpawnItems, stateroutine.HandlerOptions{})
+	stateroutine.AddHandler(w, itemSvc.ProcessItem, stateroutine.HandlerOptions{})
+	stateroutine.AddSendHandler(w, fanoutSvc.CollectResult, stateroutine.HandlerOptions{})
 
 	go func() {
 		if err := w.Start(); err != nil {

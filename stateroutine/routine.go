@@ -1,5 +1,5 @@
 // Package stateroutine provides primitives for building durable, long-running
-// routines on top of Temporal. User handler functions run as activities
+// stateroutines on top of Temporal. User handler functions run as activities
 // (no determinism constraints). When a handler needs to suspend — wait for
 // a timer or an incoming message — it returns a declarative Suspend value
 // that the runtime interprets as workflow code.
@@ -23,8 +23,8 @@ type Message interface {
 // ─── Handler function signatures ───
 
 // HandlerFunc is a function that receives state and returns a Suspend
-// describing what the routine should wait for next.
-// Return Done(result) to complete the routine.
+// describing what the stateroutine should wait for next.
+// Return Done(result) to complete the stateroutine.
 type HandlerFunc[State HandlerState, Result any] func(ctx *Context, state State) (*Suspend[Result], error)
 
 // SendFunc handles a fire-and-forget message (Signal).
@@ -36,9 +36,9 @@ type CallFunc[State HandlerState, Req Message, Resp any, Result any] func(ctx *C
 // ─── Terminal error handler function signatures ───
 //
 // Terminal error handlers are invoked only after all retries configured in the
-// ErrorPolicy are exhausted. They receive the same inputs as the original
+// RetryPolicy are exhausted. They receive the same inputs as the original
 // handler plus the final error, and can compensate, transition to a different
-// state, or fail the routine.
+// state, or fail the stateroutine.
 
 // TerminalErrorFunc handles terminal errors for a HandlerFunc.
 type TerminalErrorFunc[State HandlerState, Result any] func(ctx *Context, state State, err error) (*Suspend[Result], error)
@@ -51,81 +51,109 @@ type CallTerminalErrorFunc[State HandlerState, Req Message, Resp any, Result any
 
 // ─── Worker registry ───
 
-// handlerEntry wraps a handler with its error policy configuration.
+// handlerEntry wraps a handler with its options configuration.
 type handlerEntry struct {
-	handler     any
-	errorPolicy ErrorPolicy
+	handler any
+	options HandlerOptions
 }
 
-func addEntry(w *Worker, key string, handler any, policy ErrorPolicy, onTerminalError any) {
+func addEntry(w *Worker, key string, handler any, opts HandlerOptions) {
 	if _, exists := w.handlers[key]; exists {
 		panic("stateroutine: handler already registered for key: " + key)
 	}
-
-	w.handlers[key] = handlerEntry{handler: handler, errorPolicy: policy}
-
-	// If a terminal error handler was provided, register it under the error:
-	// prefix and set the onTerminalErrorKey in the error policy.
-	if onTerminalError != nil {
-		errorKey := "error:" + key
-		w.handlers[errorKey] = handlerEntry{handler: onTerminalError}
-		entry := w.handlers[key]
-		entry.errorPolicy.onTerminalErrorKey = errorKey
-		w.handlers[key] = entry
-	}
+	w.handlers[key] = handlerEntry{handler: handler, options: opts}
 }
 
+func registerTerminalError(w *Worker, primaryKey string, teHandler any) {
+	errorKey := "error:" + primaryKey
+	w.handlers[errorKey] = handlerEntry{handler: teHandler}
+	entry := w.handlers[primaryKey]
+	entry.options.onTerminalErrorKey = errorKey
+	w.handlers[primaryKey] = entry
+}
+
+// ─── Registration types with OnTerminalError builder methods ───
+
+// handlerReg is returned by AddHandler to allow chaining .OnTerminalError().
+type handlerReg[S HandlerState, T any] struct {
+	w   *Worker
+	key string
+}
+
+// OnTerminalError registers a terminal error handler that is invoked only
+// after all retries in the RetryPolicy are exhausted, instead of failing
+// the stateroutine. The terminal error handler must have the same State and
+// Result types as the main handler.
+func (r handlerReg[S, T]) OnTerminalError(te TerminalErrorFunc[S, T]) {
+	registerTerminalError(r.w, r.key, te)
+}
+
+// sendHandlerReg is returned by AddSendHandler to allow chaining .OnTerminalError().
+type sendHandlerReg[S HandlerState, M Message, T any] struct {
+	w   *Worker
+	key string
+}
+
+// OnTerminalError registers a terminal error handler that is invoked only
+// after all retries in the RetryPolicy are exhausted, instead of failing
+// the stateroutine. The terminal error handler must have the same State, Message,
+// and Result types as the main handler.
+func (r sendHandlerReg[S, M, T]) OnTerminalError(te SendTerminalErrorFunc[S, M, T]) {
+	registerTerminalError(r.w, r.key, te)
+}
+
+// callHandlerReg is returned by AddCallHandler to allow chaining .OnTerminalError().
+type callHandlerReg[S HandlerState, Req Message, Resp any, T any] struct {
+	w   *Worker
+	key string
+}
+
+// OnTerminalError registers a terminal error handler that is invoked only
+// after all retries in the RetryPolicy are exhausted, instead of failing
+// the stateroutine. The terminal error handler must have the same State, Request,
+// Response, and Result types as the main handler.
+func (r callHandlerReg[S, Req, Resp, T]) OnTerminalError(te CallTerminalErrorFunc[S, Req, Resp, T]) {
+	registerTerminalError(r.w, r.key, te)
+}
+
+// ─── Add* registration functions ───
+
 // AddHandler registers a HandlerFunc keyed by state Kind.
-// Any HandlerFunc can serve as a routine entry point (via Start) or as a
+// Any HandlerFunc can serve as a stateroutine entry point (via Start) or as a
 // continuation target (via After, Continue, Default, OnTimer).
-// ErrorPolicy is required and configures retry behavior for the handler.
-// An optional TerminalErrorFunc can be provided — it is invoked only after all
-// retries are exhausted, instead of failing the routine. The terminal error
-// handler must have the same State and Result types as the main handler.
-func AddHandler[S HandlerState, T any](w *Worker, h HandlerFunc[S, T], p ErrorPolicy, onTerminalError ...TerminalErrorFunc[S, T]) {
-	if len(onTerminalError) > 1 {
-		panic("stateroutine: at most one terminal error handler allowed")
-	}
-	var te any
-	if len(onTerminalError) == 1 {
-		te = onTerminalError[0]
-	}
+// HandlerOptions configures retry behavior for the handler.
+// Chain .OnTerminalError() on the returned registration to register a terminal
+// error handler — it is invoked only after all retries are exhausted, instead
+// of failing the stateroutine.
+func AddHandler[S HandlerState, T any](w *Worker, h HandlerFunc[S, T], opts HandlerOptions) handlerReg[S, T] {
 	var zero S
-	addEntry(w, "handler:"+zero.Kind(), h, p, te)
+	key := "handler:" + zero.Kind()
+	addEntry(w, key, h, opts)
+	return handlerReg[S, T]{w: w, key: key}
 }
 
 // AddSendHandler registers a SendFunc keyed by state Kind and message Kind.
-// ErrorPolicy is required and configures retry behavior for the handler.
-// An optional SendTerminalErrorFunc can be provided — it is invoked only after
-// all retries are exhausted. The terminal error handler must have the same
-// State, Message, and Result types as the main handler.
-func AddSendHandler[S HandlerState, M Message, T any](w *Worker, h SendFunc[S, M, T], p ErrorPolicy, onTerminalError ...SendTerminalErrorFunc[S, M, T]) {
-	if len(onTerminalError) > 1 {
-		panic("stateroutine: at most one terminal error handler allowed")
-	}
-	var te any
-	if len(onTerminalError) == 1 {
-		te = onTerminalError[0]
-	}
+// HandlerOptions configures retry behavior for the handler.
+// Chain .OnTerminalError() on the returned registration to register a terminal
+// error handler — it is invoked only after all retries are exhausted, instead
+// of failing the stateroutine.
+func AddSendHandler[S HandlerState, M Message, T any](w *Worker, h SendFunc[S, M, T], opts HandlerOptions) sendHandlerReg[S, M, T] {
 	var zeroS S
 	var zeroM M
-	addEntry(w, "send:"+zeroS.Kind()+":"+zeroM.Kind(), h, p, te)
+	key := "send:" + zeroS.Kind() + ":" + zeroM.Kind()
+	addEntry(w, key, h, opts)
+	return sendHandlerReg[S, M, T]{w: w, key: key}
 }
 
 // AddCallHandler registers a CallFunc keyed by state Kind and request Kind.
-// ErrorPolicy is required and configures retry behavior for the handler.
-// An optional CallTerminalErrorFunc can be provided — it is invoked only after
-// all retries are exhausted. The terminal error handler must have the same
-// State, Request, Response, and Result types as the main handler.
-func AddCallHandler[S HandlerState, Req Message, Resp any, T any](w *Worker, h CallFunc[S, Req, Resp, T], p ErrorPolicy, onTerminalError ...CallTerminalErrorFunc[S, Req, Resp, T]) {
-	if len(onTerminalError) > 1 {
-		panic("stateroutine: at most one terminal error handler allowed")
-	}
-	var te any
-	if len(onTerminalError) == 1 {
-		te = onTerminalError[0]
-	}
+// HandlerOptions configures retry behavior for the handler.
+// Chain .OnTerminalError() on the returned registration to register a terminal
+// error handler — it is invoked only after all retries are exhausted, instead
+// of failing the stateroutine.
+func AddCallHandler[S HandlerState, Req Message, Resp any, T any](w *Worker, h CallFunc[S, Req, Resp, T], opts HandlerOptions) callHandlerReg[S, Req, Resp, T] {
 	var zeroS S
 	var zeroReq Req
-	addEntry(w, "call:"+zeroS.Kind()+":"+zeroReq.Kind(), h, p, te)
+	key := "call:" + zeroS.Kind() + ":" + zeroReq.Kind()
+	addEntry(w, key, h, opts)
+	return callHandlerReg[S, Req, Resp, T]{w: w, key: key}
 }

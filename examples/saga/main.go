@@ -1,7 +1,7 @@
 // Command saga demonstrates the SAGA compensation pattern using terminal error
 // handlers. Each booking step runs as its own activity with independent retries.
 // When all retries are exhausted, the terminal error handler runs compensation
-// logic (cancelling previously booked services) instead of failing the routine.
+// logic (cancelling previously booked services) instead of failing the stateroutine.
 //
 // Continue checkpoints state between steps so that if the worker crashes after
 // booking a flight but before booking a hotel, the flight confirmation is
@@ -169,11 +169,15 @@ func main() {
 	svc := &TripService{}
 
 	w := stateroutine.NewWorker("saga-queue")
-	stateroutine.AddHandler(w, svc.BookFlight, stateroutine.ErrorPolicy{MaxAttempts: 3})
-	stateroutine.AddHandler(w, svc.BookHotel, stateroutine.ErrorPolicy{MaxAttempts: 3},
-		svc.CompensateHotel)
-	stateroutine.AddHandler(w, svc.BookCar, stateroutine.ErrorPolicy{MaxAttempts: 3},
-		svc.CompensateCar)
+	stateroutine.AddHandler(w, svc.BookFlight, stateroutine.HandlerOptions{
+		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
+	})
+	stateroutine.AddHandler(w, svc.BookHotel, stateroutine.HandlerOptions{
+		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
+	}).OnTerminalError(svc.CompensateHotel)
+	stateroutine.AddHandler(w, svc.BookCar, stateroutine.HandlerOptions{
+		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
+	}).OnTerminalError(svc.CompensateCar)
 
 	go func() {
 		if err := w.Start(); err != nil {
