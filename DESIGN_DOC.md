@@ -50,17 +50,22 @@ Each durable routine is an actor with a mailbox. Communication follows actor mod
 There is **no shared state type `S`** across handlers. Each handler declares its own state type. State flows forward explicitly through Suspend cases:
 
 ```go
-func reserveItem(ctx *durable.Context, args BookingArgs) (*durable.Suspend, error) {
+type ReservedState struct { UserID, ItemID string }
+func (ReservedState) Kind() string { return "booking.reserved" }
+
+type BookingService struct { /* injected deps */ }
+
+func (s *BookingService) Handle(ctx *durable.Context, args BookingArgs) (*durable.Suspend, error) {
     reserved := ReservedState{UserID: args.UserID, ItemID: args.ItemID}
     return durable.Select(
-        durable.OnCast(PaymentInbox, processPayment, reserved),
+        durable.OnCast(PaymentInbox, s.ProcessPayment, reserved),
     ), nil
 }
 
-func processPayment(ctx *durable.Context, state ReservedState, msg PaymentInfo) (*durable.Suspend, error) {
+func (s *BookingService) ProcessPayment(ctx *durable.Context, state ReservedState, msg PaymentInfo) (*durable.Suspend, error) {
     paid := PaidState{UserID: state.UserID, ItemID: state.ItemID, PaymentID: "PAY-123"}
     return durable.Select(
-        durable.OnCast(ShippingInbox, processShipping, paid),
+        durable.OnCast(ShippingInbox, s.ProcessShipping, paid),
     ), nil
 }
 ```
@@ -71,13 +76,22 @@ This eliminates the "bloated shared struct" problem where every step's fields ac
 
 The API is defined in the [`durable/`](durable/) package:
 
-#### Routine Identity (River-style)
+#### State Kind and Handler Registration
 
-Routine types are identified by their args implementing `RoutineArgs`:
+All handler state types implement `HandlerState` (`Kind() string`), providing stable string identifiers for handler lookup and serialization across continue-as-new boundaries. `RoutineArgs` embeds `HandlerState`.
 
-- **`RoutineArgs`** — interface with `Kind() string`, identifies the routine type (Temporal workflow type)
-- **`Workers`** / **`NewWorkers()`** — type-safe handler registry
-- **`AddRoutine[Args](workers, handler)`** — registers a handler for a routine kind
+- **`HandlerState`** — interface with `Kind() string`, implemented by all handler state types
+- **`RoutineArgs`** — embeds `HandlerState`, identifies the routine type (Temporal workflow type)
+- **`RetryPolicy`** — configures retry behavior (max attempts, intervals, backoff, timeouts)
+- **`WithRetryPolicy(p)`** — option for handler registration and suspend cases
+
+Registration functions (all accept `...HandlerOption`). Because Go does not allow type parameters on methods, these are package-level functions that take `*Worker`:
+
+- **`AddRoutineHandler[Args](w, handler)`** — registers a HandlerFunc for a routine kind
+- **`AddHandler[S](w, handler)`** — registers a HandlerFunc keyed by `handler:{state.Kind()}`
+- **`AddCastHandler[S, M](w, handler)`** — registers a CastFunc keyed by `cast:{state.Kind()}`
+- **`AddCallHandler[S, Req, Resp](w, handler)`** — registers a CallFunc keyed by `call:{state.Kind()}`
+- **`AddQueryHandler[S, Req, Resp](w, handler)`** — registers a QueryFunc keyed by `query:{state.Kind()}`
 
 #### Descriptors (compile-time type safety)
 
@@ -87,19 +101,25 @@ Routine types are identified by their args implementing `RoutineArgs`:
 
 #### Handler Signatures
 
-- **`HandlerFunc[State]`** — `func(ctx *Context, state State) (*Suspend, error)`
-- **`CastFunc[State, M]`** — `func(ctx *Context, state State, msg M) (*Suspend, error)`
-- **`CallFunc[State, Req, Resp]`** — `func(ctx *Context, state State, req Req) (Resp, *Suspend, error)`
-- **`QueryFunc[State, Req, Resp]`** — `func(ctx *Context, state State, req Req) (Resp, error)`
+All `State` type parameters are constrained to `HandlerState`:
+
+- **`HandlerFunc[State HandlerState]`** — `func(ctx *Context, state State) (*Suspend, error)`
+- **`CastFunc[State HandlerState, M]`** — `func(ctx *Context, state State, msg M) (*Suspend, error)`
+- **`CallFunc[State HandlerState, Req, Resp]`** — `func(ctx *Context, state State, req Req) (Resp, *Suspend, error)`
+- **`QueryFunc[State HandlerState, Req, Resp]`** — `func(ctx *Context, state State, req Req) (Resp, error)`
 
 #### Suspend Constructors
 
-- **`After(duration, handler, state)`** — suspend until a timer fires
+All constructors except `OnQuery` and `Select` accept `...CaseOption` for per-case retry policy overrides:
+
+- **`After(duration, handler, state, ...CaseOption)`** — suspend until a timer fires
 - **`Select(cases...)`** — wait for the first of several events
-- **`AfterFunc(duration, handler, state)`** — a timer case for use inside Select
-- **`OnCast(inbox, handler, state)`** — fires when a Cast message arrives
-- **`OnCall(method, handler, state)`** — fires when a client calls a method
-- **`OnQuery(query, handler, state)`** — fires when a client queries
+- **`Continue(handler, state, ...CaseOption)`** — checkpoint state and immediately invoke handler (no waiting)
+- **`AfterFunc(duration, handler, state, ...CaseOption)`** — a timer case for use inside Select
+- **`OnCast(inbox, handler, state, ...CaseOption)`** — fires when a Cast message arrives
+- **`OnCall(method, handler, state, ...CaseOption)`** — fires when a client calls a method
+- **`OnQuery(query, handler, state)`** — fires when a client queries (no retry — runs in workflow context)
+- **`Default(handler, state, ...CaseOption)`** — a case for use inside Select that fires immediately if no other cases are ready (maps to `sel.AddDefault()`)
 
 #### Context
 
@@ -117,7 +137,7 @@ Routine types are identified by their args implementing `RoutineArgs`:
 
 #### Worker
 
-- **`NewWorker(taskQueue, workers)`** — creates a worker using a handler registry
+- **`NewWorker(taskQueue)`** — creates a worker; register handlers with `Add*` functions before calling `Start`
 
 ### Examples
 
@@ -139,6 +159,8 @@ See the [`examples/`](examples/) directory:
 | **Fan-out / fan-in** | Parent spawns children via `ctx.Spawn(id, args)`. Each child calls `durable.Cast(ctx, parentID, inbox, result)` to send results back. Parent collects via `OnCast`, one at a time. See [`examples/fanout/`](examples/fanout/main.go). |
 | **Producer-consumer** | Producer calls `durable.Cast` in a loop to send items. Consumer uses `Select(OnCast(ItemsInbox, ...), OnCast(DoneInbox, ...))` to process items and detect completion. See [`examples/pipeline/`](examples/pipeline/main.go). |
 | **SAGA compensation** | Handler calls services sequentially; on error, calls compensation. All normal Go error handling. See [`examples/saga/`](examples/saga/main.go). |
+| **Checkpoint and continue** | Handler does expensive work, returns `Continue(nextHandler, state)`. The runtime checkpoints state (continue-as-new boundary) and immediately invokes the next handler without waiting. |
+| **Drain buffered signals** | Handler returns `Select(OnCast(inbox, handler, state), Default(doneHandler, state))`. Processes pending signals one at a time; when none are buffered, the default case fires. |
 | **Request-response** | Client uses `ClientCall(client, ctx, id, method, req)` to invoke a method that returns a typed response. |
 | **Read-only status check** | Client uses `ClientQuery(client, ctx, id, query, req)` for instant, non-mutating reads. |
 
@@ -158,7 +180,20 @@ RoutineWorkflow(ctx, routineID):
         if suspend == nil: complete workflow
 
         // Interpret the Suspend declaratively
+
+        // If the only case is immediate (Continue), skip the selector entirely
+        if len(suspend.cases) == 1 && suspend.cases[0].immediate:
+            handler = suspend.cases[0].handler
+            state = suspend.cases[0].state
+            continue
+
         for each case in suspend.cases:
+            if case.immediate:
+                // Default case — fires if no other cases are ready
+                sel.AddDefault(func() {
+                    handler = case.handler
+                    state = case.state
+                })
             if case.timer:
                 sel.AddTimer(d, func() {
                     handler = case.handler
@@ -230,8 +265,8 @@ Because the workflow is a simple loop (run activity → interpret suspend → re
 
 ## Open Questions
 
-1. **Error handling and retries**: Handlers run as activities, so Temporal's activity retry policy applies. How should we expose retry configuration?
+1. ~~**Error handling and retries**: Handlers run as activities, so Temporal's activity retry policy applies. How should we expose retry configuration?~~ **Resolved**: `RetryPolicy` struct with `WithRetryPolicy` option at both handler registration and per-case level. Priority: case-level > handler registration-level > Temporal default.
 2. **State size limits**: Temporal has payload size limits (~2MB default). Large state may need external storage.
 3. **Testing**: Should support a local/in-memory mode for unit testing without a Temporal server.
 4. **Observability**: How do we expose Temporal's native visibility (search attributes, workflow status) through the abstraction?
-5. **Handler identification for continue-as-new**: Need a strategy for identifying handler functions across continue-as-new boundaries (function names, registration, etc.).
+5. ~~**Handler identification for continue-as-new**: Need a strategy for identifying handler functions across continue-as-new boundaries (function names, registration, etc.).~~ **Resolved**: All state types implement `HandlerState` (`Kind() string`). Handlers are registered in a flat map with composite keys (`routine:{kind}`, `handler:{kind}`, `cast:{kind}`, `call:{kind}`, `query:{kind}`). Each `Case` carries a `handlerKey` for runtime lookup after continue-as-new.

@@ -5,12 +5,19 @@
 // that the runtime interprets as workflow code.
 package durable
 
+// HandlerState is the interface that all handler state types must implement.
+// Kind returns a stable string identifier used for handler lookup and
+// serialization across continue-as-new boundaries.
+type HandlerState interface {
+	Kind() string
+}
+
 // RoutineArgs is the interface that routine input types must implement.
 // Kind returns a stable string that identifies the routine type, used as the
 // Temporal workflow type. This decouples the routine's identity from Go type
 // names, allowing safe renames across deploys.
 type RoutineArgs interface {
-	Kind() string
+	HandlerState
 }
 
 // ─── Descriptors (compile-time type safety) ───
@@ -32,37 +39,60 @@ type Query[Req, Resp any] struct{ Name string }
 // HandlerFunc is a function that receives state and returns a Suspend
 // describing what the routine should wait for next.
 // Returning a nil *Suspend completes the routine.
-type HandlerFunc[State any] func(ctx *Context, state State) (*Suspend, error)
+type HandlerFunc[State HandlerState] func(ctx *Context, state State) (*Suspend, error)
 
 // CastFunc handles a fire-and-forget message (Signal).
-type CastFunc[State, M any] func(ctx *Context, state State, msg M) (*Suspend, error)
+type CastFunc[State HandlerState, M any] func(ctx *Context, state State, msg M) (*Suspend, error)
 
 // CallFunc handles a synchronous request-response (Update).
-type CallFunc[State, Req, Resp any] func(ctx *Context, state State, req Req) (Resp, *Suspend, error)
+type CallFunc[State HandlerState, Req, Resp any] func(ctx *Context, state State, req Req) (Resp, *Suspend, error)
 
 // QueryFunc handles a synchronous read-only query (Query).
-type QueryFunc[State, Req, Resp any] func(ctx *Context, state State, req Req) (Resp, error)
+type QueryFunc[State HandlerState, Req, Resp any] func(ctx *Context, state State, req Req) (Resp, error)
 
 // ─── Worker registry ───
 
-// Workers is a type-safe registry of routine handlers, following the River
-// pattern. Create with NewWorkers, register handlers with AddRoutine.
-type Workers struct {
-	handlers map[string]any
+// handlerEntry wraps a handler with its retry policy configuration.
+type handlerEntry struct {
+	handler     any
+	retryPolicy *RetryPolicy
 }
 
-// NewWorkers creates a new routine handler registry.
-func NewWorkers() *Workers {
-	return &Workers{handlers: make(map[string]any)}
-}
-
-// AddRoutine registers a handler function for a routine type identified by
-// Args.Kind(). Panics if a handler is already registered for the same kind.
-func AddRoutine[Args RoutineArgs](workers *Workers, handler HandlerFunc[Args]) {
-	var zero Args
-	kind := zero.Kind()
-	if _, exists := workers.handlers[kind]; exists {
-		panic("durable: routine already registered for kind: " + kind)
+func addEntry(w *Worker, key string, handler any, opts []HandlerOption) {
+	if _, exists := w.handlers[key]; exists {
+		panic("durable: handler already registered for key: " + key)
 	}
-	workers.handlers[kind] = handler
+	o := applyOpts(opts)
+	w.handlers[key] = handlerEntry{handler: handler, retryPolicy: o.retryPolicy}
+}
+
+// AddRoutineHandler registers a handler function for a routine type identified
+// by Args.Kind(). Panics if a handler is already registered for the same kind.
+func AddRoutineHandler[Args RoutineArgs](w *Worker, handler HandlerFunc[Args], opts ...HandlerOption) {
+	var zero Args
+	addEntry(w, "routine:"+zero.Kind(), handler, opts)
+}
+
+// AddHandler registers a HandlerFunc for a state Kind.
+func AddHandler[S HandlerState](w *Worker, h HandlerFunc[S], opts ...HandlerOption) {
+	var zero S
+	addEntry(w, "handler:"+zero.Kind(), h, opts)
+}
+
+// AddCastHandler registers a CastFunc for a state Kind.
+func AddCastHandler[S HandlerState, M any](w *Worker, h CastFunc[S, M], opts ...HandlerOption) {
+	var zero S
+	addEntry(w, "cast:"+zero.Kind(), h, opts)
+}
+
+// AddCallHandler registers a CallFunc for a state Kind.
+func AddCallHandler[S HandlerState, Req, Resp any](w *Worker, h CallFunc[S, Req, Resp], opts ...HandlerOption) {
+	var zero S
+	addEntry(w, "call:"+zero.Kind(), h, opts)
+}
+
+// AddQueryHandler registers a QueryFunc for a state Kind.
+func AddQueryHandler[S HandlerState, Req, Resp any](w *Worker, h QueryFunc[S, Req, Resp], opts ...HandlerOption) {
+	var zero S
+	addEntry(w, "query:"+zero.Kind(), h, opts)
 }

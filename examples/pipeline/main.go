@@ -11,6 +11,7 @@
 //
 // The producer and consumer are fully independent durable routines. Either
 // can crash and resume without losing messages (Temporal signals are durable).
+// Uses struct-based handlers for dependency injection.
 package main
 
 import (
@@ -53,9 +54,15 @@ type ConsumerState struct {
 	Received []Item
 }
 
-// --- Producer handler ---
+func (ConsumerState) Kind() string { return "consumer.processing" }
 
-func produce(ctx *durable.Context, args ProducerArgs) (*durable.Suspend, error) {
+// --- Producer service ---
+
+type ProducerService struct {
+	// Injected dependencies would go here.
+}
+
+func (s *ProducerService) Handle(ctx *durable.Context, args ProducerArgs) (*durable.Suspend, error) {
 	for i, data := range args.Items {
 		item := Item{Seq: i, Data: data}
 		if err := durable.Cast(ctx, args.ConsumerRoutineID, ItemsInbox, item); err != nil {
@@ -71,27 +78,31 @@ func produce(ctx *durable.Context, args ProducerArgs) (*durable.Suspend, error) 
 	return nil, nil
 }
 
-// --- Consumer handlers ---
+// --- Consumer service ---
 
-func waitForItems(ctx *durable.Context, args ConsumerArgs) (*durable.Suspend, error) {
+type ConsumerService struct {
+	// Injected dependencies would go here.
+}
+
+func (s *ConsumerService) Handle(ctx *durable.Context, args ConsumerArgs) (*durable.Suspend, error) {
 	state := ConsumerState{Name: args.Name}
 	return durable.Select(
-		durable.OnCast(ItemsInbox, handleItem, state),
-		durable.OnCast(DoneInbox, handleDone, state),
+		durable.OnCast(ItemsInbox, s.HandleItem, state),
+		durable.OnCast(DoneInbox, s.HandleDone, state),
 	), nil
 }
 
-func handleItem(ctx *durable.Context, state ConsumerState, item Item) (*durable.Suspend, error) {
+func (s *ConsumerService) HandleItem(ctx *durable.Context, state ConsumerState, item Item) (*durable.Suspend, error) {
 	fmt.Printf("consumer %s received item %d: %s\n", state.Name, item.Seq, item.Data)
 	state.Received = append(state.Received, item)
 
 	return durable.Select(
-		durable.OnCast(ItemsInbox, handleItem, state),
-		durable.OnCast(DoneInbox, handleDone, state),
+		durable.OnCast(ItemsInbox, s.HandleItem, state),
+		durable.OnCast(DoneInbox, s.HandleDone, state),
 	), nil
 }
 
-func handleDone(ctx *durable.Context, state ConsumerState, _ DoneMsg) (*durable.Suspend, error) {
+func (s *ConsumerService) HandleDone(ctx *durable.Context, state ConsumerState, _ DoneMsg) (*durable.Suspend, error) {
 	fmt.Printf("consumer %s done, received %d items\n", state.Name, len(state.Received))
 	return nil, nil
 }
@@ -101,11 +112,15 @@ func handleDone(ctx *durable.Context, state ConsumerState, _ DoneMsg) (*durable.
 func main() {
 	ctx := context.Background()
 
-	workers := durable.NewWorkers()
-	durable.AddRoutine(workers, produce)
-	durable.AddRoutine(workers, waitForItems)
+	producerSvc := &ProducerService{}
+	consumerSvc := &ConsumerService{}
 
-	w := durable.NewWorker("pipeline-queue", workers)
+	w := durable.NewWorker("pipeline-queue")
+	durable.AddRoutineHandler(w, producerSvc.Handle)
+	durable.AddRoutineHandler(w, consumerSvc.Handle)
+	durable.AddCastHandler(w, consumerSvc.HandleItem)
+	durable.AddCastHandler(w, consumerSvc.HandleDone)
+
 	go func() {
 		if err := w.Start(); err != nil {
 			log.Fatal(err)

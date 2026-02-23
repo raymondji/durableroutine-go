@@ -1,5 +1,6 @@
 // Command reminder demonstrates a simple durable routine that sends a
 // sequence of emails with durable sleeps between them.
+// Uses struct-based handlers for dependency injection.
 // Each handler declares its own state type — state flows forward via After().
 package main
 
@@ -20,19 +21,23 @@ type ReminderArgs struct {
 
 func (ReminderArgs) Kind() string { return "reminder" }
 
-// --- Handlers ---
+// --- Service struct ---
 
-func sendInitial(ctx *durable.Context, args ReminderArgs) (*durable.Suspend, error) {
+type ReminderService struct {
+	// Injected dependencies would go here (e.g., email client).
+}
+
+func (s *ReminderService) Handle(ctx *durable.Context, args ReminderArgs) (*durable.Suspend, error) {
 	fmt.Printf("sending initial email to %s\n", args.Email)
-	return durable.After(24*time.Hour, sendFollowUp, args), nil
+	return durable.After(24*time.Hour, s.SendFollowUp, args), nil
 }
 
-func sendFollowUp(ctx *durable.Context, args ReminderArgs) (*durable.Suspend, error) {
+func (s *ReminderService) SendFollowUp(ctx *durable.Context, args ReminderArgs) (*durable.Suspend, error) {
 	fmt.Printf("sending follow-up email to %s\n", args.Email)
-	return durable.After(7*24*time.Hour, sendFinal, args), nil
+	return durable.After(7*24*time.Hour, s.SendFinal, args), nil
 }
 
-func sendFinal(ctx *durable.Context, args ReminderArgs) (*durable.Suspend, error) {
+func (s *ReminderService) SendFinal(ctx *durable.Context, args ReminderArgs) (*durable.Suspend, error) {
 	fmt.Printf("sending final email to %s\n", args.Email)
 	return nil, nil
 }
@@ -42,10 +47,13 @@ func sendFinal(ctx *durable.Context, args ReminderArgs) (*durable.Suspend, error
 func main() {
 	ctx := context.Background()
 
-	workers := durable.NewWorkers()
-	durable.AddRoutine(workers, sendInitial)
+	svc := &ReminderService{}
 
-	w := durable.NewWorker("reminder-queue", workers)
+	w := durable.NewWorker("reminder-queue")
+	durable.AddRoutineHandler(w, svc.Handle)
+	durable.AddHandler(w, svc.SendFollowUp)
+	durable.AddHandler(w, svc.SendFinal)
+
 	go func() {
 		if err := w.Start(); err != nil {
 			log.Fatal(err)

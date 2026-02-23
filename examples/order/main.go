@@ -1,5 +1,6 @@
 // Command order demonstrates a durable routine that waits for messages
 // using Select/OnCast, modelling an order lifecycle with Cast + timer + Query.
+// Uses struct-based handlers for dependency injection.
 package main
 
 import (
@@ -44,52 +45,60 @@ type StatusResp struct {
 
 type PendingState struct{}
 
+func (PendingState) Kind() string { return "order.pending" }
+
 type PlacedState struct {
 	OrderID string
 	Items   []string
 }
 
-// --- Handlers ---
+func (PlacedState) Kind() string { return "order.placed" }
 
-func waitForOrder(ctx *durable.Context, _ OrderArgs) (*durable.Suspend, error) {
+// --- Service struct ---
+
+type OrderService struct {
+	// Injected dependencies would go here.
+}
+
+func (s *OrderService) Handle(ctx *durable.Context, _ OrderArgs) (*durable.Suspend, error) {
 	return durable.Select(
-		durable.OnCast(PlaceOrderInbox, handlePlace, PendingState{}),
-		durable.OnQuery(GetOrderStatus, queryPendingStatus, PendingState{}),
-		durable.AfterFunc(30*time.Minute, handleTimeout, PendingState{}),
+		durable.OnCast(PlaceOrderInbox, s.HandlePlace, PendingState{}),
+		durable.OnQuery(GetOrderStatus, s.QueryPendingStatus, PendingState{}),
+		durable.AfterFunc(30*time.Minute, s.HandleTimeout, PendingState{}),
 	), nil
 }
 
-func handlePlace(ctx *durable.Context, _ PendingState, req PlaceOrderReq) (*durable.Suspend, error) {
+func (s *OrderService) HandlePlace(ctx *durable.Context, _ PendingState, req PlaceOrderReq) (*durable.Suspend, error) {
 	fmt.Printf("placing order %s\n", req.OrderID)
 	placed := PlacedState{OrderID: req.OrderID, Items: req.Items}
 
 	return durable.Select(
-		durable.OnCast(CancelOrderInbox, handleCancel, placed),
-		durable.OnQuery(GetOrderStatus, queryPlacedStatus, placed),
-		durable.AfterFunc(24*time.Hour, handleShip, placed),
+		durable.OnCast(CancelOrderInbox, s.HandleCancel, placed),
+		durable.OnQuery(GetOrderStatus, s.QueryPlacedStatus, placed),
+		durable.AfterFunc(24*time.Hour, s.HandleShip, placed),
 	), nil
 }
 
-func handleCancel(ctx *durable.Context, state PlacedState, _ CancelOrderReq) (*durable.Suspend, error) {
+func (s *OrderService) HandleCancel(ctx *durable.Context, state PlacedState, _ CancelOrderReq) (*durable.Suspend, error) {
 	fmt.Printf("cancelling order %s\n", state.OrderID)
 	return nil, nil
 }
 
-func handleShip(ctx *durable.Context, state PlacedState) (*durable.Suspend, error) {
+func (s *OrderService) HandleShip(ctx *durable.Context, state PlacedState) (*durable.Suspend, error) {
 	fmt.Printf("shipping order %s\n", state.OrderID)
 	return nil, nil
 }
 
-func handleTimeout(ctx *durable.Context, _ PendingState) (*durable.Suspend, error) {
+func (s *OrderService) HandleTimeout(ctx *durable.Context, _ PendingState) (*durable.Suspend, error) {
 	fmt.Println("order timed out, no placement received")
 	return nil, nil
 }
 
-func queryPendingStatus(ctx *durable.Context, _ PendingState, _ StatusReq) (StatusResp, error) {
+func (s *OrderService) QueryPendingStatus(ctx *durable.Context, _ PendingState, _ StatusReq) (StatusResp, error) {
 	return StatusResp{Status: "pending"}, nil
 }
 
-func queryPlacedStatus(ctx *durable.Context, state PlacedState, _ StatusReq) (StatusResp, error) {
+func (s *OrderService) QueryPlacedStatus(ctx *durable.Context, state PlacedState, _ StatusReq) (StatusResp, error) {
 	return StatusResp{Status: "placed", OrderID: state.OrderID}, nil
 }
 
@@ -98,10 +107,17 @@ func queryPlacedStatus(ctx *durable.Context, state PlacedState, _ StatusReq) (St
 func main() {
 	ctx := context.Background()
 
-	workers := durable.NewWorkers()
-	durable.AddRoutine(workers, waitForOrder)
+	svc := &OrderService{}
 
-	w := durable.NewWorker("order-queue", workers)
+	w := durable.NewWorker("order-queue")
+	durable.AddRoutineHandler(w, svc.Handle)
+	durable.AddCastHandler(w, svc.HandlePlace)
+	durable.AddCastHandler(w, svc.HandleCancel)
+	durable.AddHandler(w, svc.HandleShip)
+	durable.AddHandler(w, svc.HandleTimeout)
+	durable.AddQueryHandler(w, svc.QueryPendingStatus)
+	durable.AddQueryHandler(w, svc.QueryPlacedStatus)
+
 	go func() {
 		if err := w.Start(); err != nil {
 			log.Fatal(err)

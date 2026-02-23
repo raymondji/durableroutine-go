@@ -10,6 +10,7 @@
 // Each child runs as its own durable routine (Temporal child workflow) with
 // independent retries, timeouts, and event history. Children send results
 // back to the parent via durable.Cast — like writing to a channel.
+// Uses struct-based handlers for dependency injection.
 package main
 
 import (
@@ -39,19 +40,6 @@ type ItemResult struct {
 	Output string
 }
 
-func processItem(ctx *durable.Context, args ItemArgs) (*durable.Suspend, error) {
-	result := ItemResult{
-		ID:     args.ID,
-		Output: fmt.Sprintf("processed: %s", args.Data),
-	}
-
-	// Send result back to the parent — like ch <- result.
-	if err := durable.Cast(ctx, args.ParentID, ResultsInbox, result); err != nil {
-		return nil, fmt.Errorf("send result: %w", err)
-	}
-	return nil, nil
-}
-
 // --- Parent routine ---
 
 type BatchArgs struct {
@@ -68,7 +56,15 @@ type FanoutState struct {
 	Results []ItemResult
 }
 
-func fanOut(ctx *durable.Context, args BatchArgs) (*durable.Suspend, error) {
+func (FanoutState) Kind() string { return "fanout.collecting" }
+
+// --- Service struct ---
+
+type FanoutService struct {
+	// Injected dependencies would go here.
+}
+
+func (s *FanoutService) Handle(ctx *durable.Context, args BatchArgs) (*durable.Suspend, error) {
 	parentID := ctx.RoutineID()
 
 	for _, item := range args.Items {
@@ -78,17 +74,17 @@ func fanOut(ctx *durable.Context, args BatchArgs) (*durable.Suspend, error) {
 
 	state := FanoutState{Pending: len(args.Items)}
 	return durable.Select(
-		durable.OnCast(ResultsInbox, collectResult, state),
+		durable.OnCast(ResultsInbox, s.CollectResult, state),
 	), nil
 }
 
-func collectResult(ctx *durable.Context, state FanoutState, result ItemResult) (*durable.Suspend, error) {
+func (s *FanoutService) CollectResult(ctx *durable.Context, state FanoutState, result ItemResult) (*durable.Suspend, error) {
 	state.Results = append(state.Results, result)
 	state.Pending--
 
 	if state.Pending > 0 {
 		return durable.Select(
-			durable.OnCast(ResultsInbox, collectResult, state),
+			durable.OnCast(ResultsInbox, s.CollectResult, state),
 		), nil
 	}
 
@@ -100,16 +96,38 @@ func collectResult(ctx *durable.Context, state FanoutState, result ItemResult) (
 	return nil, nil
 }
 
+// --- Item processor service ---
+
+type ItemService struct {
+	// Injected dependencies would go here.
+}
+
+func (s *ItemService) Handle(ctx *durable.Context, args ItemArgs) (*durable.Suspend, error) {
+	result := ItemResult{
+		ID:     args.ID,
+		Output: fmt.Sprintf("processed: %s", args.Data),
+	}
+
+	// Send result back to the parent — like ch <- result.
+	if err := durable.Cast(ctx, args.ParentID, ResultsInbox, result); err != nil {
+		return nil, fmt.Errorf("send result: %w", err)
+	}
+	return nil, nil
+}
+
 // --- main ---
 
 func main() {
 	ctx := context.Background()
 
-	workers := durable.NewWorkers()
-	durable.AddRoutine(workers, fanOut)
-	durable.AddRoutine(workers, processItem)
+	fanoutSvc := &FanoutService{}
+	itemSvc := &ItemService{}
 
-	w := durable.NewWorker("fanout-queue", workers)
+	w := durable.NewWorker("fanout-queue")
+	durable.AddRoutineHandler(w, fanoutSvc.Handle)
+	durable.AddRoutineHandler(w, itemSvc.Handle)
+	durable.AddCastHandler(w, fanoutSvc.CollectResult)
+
 	go func() {
 		if err := w.Start(); err != nil {
 			log.Fatal(err)
