@@ -10,6 +10,20 @@ Instead we should let handlers SetQueryResult to a static value, and then Client
 
 Cast comes straight from genserver, but I think Send is a slightly more intuitive name for people who haven't worked with Genserver before.
 
+## Rename the library to stateroutine
+
+A portmanteau of "state machine" + "goroutine"
+
+## Make this easy to install as a go library
+
+Not sure if any changes are needed for this
+
+## How do we make it more clear that spawning/casting to other Routines within a Routine handler does not happen immediately?
+
+Some possible ideas:
+1. Make the names of the methods like SpawnAsync or BufferSpawn
+2. Make the names of the 
+
 ## Add support for defining an error state handler on RetryPolicy
 
 By default, after all retries are exhausted, the entire Routine fails.
