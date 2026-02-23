@@ -22,19 +22,20 @@ import (
 	"github.com/raymondji/durableroutine/durable"
 )
 
-// --- Descriptors ---
-
-var ItemsInbox = durable.Inbox[Item]{Name: "items"}
-var DoneInbox = durable.Inbox[DoneMsg]{Name: "done"}
-
-// --- Types ---
+// --- Messages ---
 
 type Item struct {
 	Seq  int
 	Data string
 }
 
+func (Item) Kind() string { return "items" }
+
 type DoneMsg struct{}
+
+func (DoneMsg) Kind() string { return "done" }
+
+// --- Args ---
 
 type ProducerArgs struct {
 	Items             []string
@@ -65,17 +66,17 @@ type ProducerService struct {
 func (s *ProducerService) Handle(ctx *durable.Context, args ProducerArgs) (*durable.Suspend, error) {
 	for i, data := range args.Items {
 		item := Item{Seq: i, Data: data}
-		if err := durable.Cast(ctx, args.ConsumerRoutineID, ItemsInbox, item); err != nil {
+		if err := durable.Cast(ctx, args.ConsumerRoutineID, item); err != nil {
 			return nil, fmt.Errorf("send item %d: %w", i, err)
 		}
 		fmt.Printf("produced item %d: %s\n", i, data)
 	}
 
-	if err := durable.Cast(ctx, args.ConsumerRoutineID, DoneInbox, DoneMsg{}); err != nil {
+	if err := durable.Cast(ctx, args.ConsumerRoutineID, DoneMsg{}); err != nil {
 		return nil, fmt.Errorf("send done: %w", err)
 	}
 	fmt.Println("producer finished")
-	return nil, nil
+	return durable.Done(), nil
 }
 
 // --- Consumer service ---
@@ -87,8 +88,8 @@ type ConsumerService struct {
 func (s *ConsumerService) Handle(ctx *durable.Context, args ConsumerArgs) (*durable.Suspend, error) {
 	state := ConsumerState{Name: args.Name}
 	return durable.Select(
-		durable.OnCast(ItemsInbox, s.HandleItem, state),
-		durable.OnCast(DoneInbox, s.HandleDone, state),
+		durable.OnCast(s.HandleItem, state),
+		durable.OnCast(s.HandleDone, state),
 	), nil
 }
 
@@ -97,14 +98,14 @@ func (s *ConsumerService) HandleItem(ctx *durable.Context, state ConsumerState, 
 	state.Received = append(state.Received, item)
 
 	return durable.Select(
-		durable.OnCast(ItemsInbox, s.HandleItem, state),
-		durable.OnCast(DoneInbox, s.HandleDone, state),
+		durable.OnCast(s.HandleItem, state),
+		durable.OnCast(s.HandleDone, state),
 	), nil
 }
 
 func (s *ConsumerService) HandleDone(ctx *durable.Context, state ConsumerState, _ DoneMsg) (*durable.Suspend, error) {
 	fmt.Printf("consumer %s done, received %d items\n", state.Name, len(state.Received))
-	return nil, nil
+	return durable.Done(), nil
 }
 
 // --- main ---

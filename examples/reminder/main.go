@@ -39,7 +39,7 @@ func (s *ReminderService) SendFollowUp(ctx *durable.Context, args ReminderArgs) 
 
 func (s *ReminderService) SendFinal(ctx *durable.Context, args ReminderArgs) (*durable.Suspend, error) {
 	fmt.Printf("sending final email to %s\n", args.Email)
-	return nil, nil
+	return durable.Done(), nil
 }
 
 // --- main ---

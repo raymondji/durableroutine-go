@@ -21,10 +21,6 @@ import (
 	"github.com/raymondji/durableroutine/durable"
 )
 
-// --- Descriptors ---
-
-var ResultsInbox = durable.Inbox[ItemResult]{Name: "results"}
-
 // --- Child routine ---
 
 type ItemArgs struct {
@@ -35,10 +31,14 @@ type ItemArgs struct {
 
 func (ItemArgs) Kind() string { return "process-item" }
 
+// --- Messages ---
+
 type ItemResult struct {
 	ID     string
 	Output string
 }
+
+func (ItemResult) Kind() string { return "results" }
 
 // --- Parent routine ---
 
@@ -74,7 +74,7 @@ func (s *FanoutService) Handle(ctx *durable.Context, args BatchArgs) (*durable.S
 
 	state := FanoutState{Pending: len(args.Items)}
 	return durable.Select(
-		durable.OnCast(ResultsInbox, s.CollectResult, state),
+		durable.OnCast(s.CollectResult, state),
 	), nil
 }
 
@@ -84,7 +84,7 @@ func (s *FanoutService) CollectResult(ctx *durable.Context, state FanoutState, r
 
 	if state.Pending > 0 {
 		return durable.Select(
-			durable.OnCast(ResultsInbox, s.CollectResult, state),
+			durable.OnCast(s.CollectResult, state),
 		), nil
 	}
 
@@ -93,7 +93,7 @@ func (s *FanoutService) CollectResult(ctx *durable.Context, state FanoutState, r
 	for _, r := range state.Results {
 		fmt.Printf("  %s: %s\n", r.ID, r.Output)
 	}
-	return nil, nil
+	return durable.Done(), nil
 }
 
 // --- Item processor service ---
@@ -109,10 +109,10 @@ func (s *ItemService) Handle(ctx *durable.Context, args ItemArgs) (*durable.Susp
 	}
 
 	// Send result back to the parent — like ch <- result.
-	if err := durable.Cast(ctx, args.ParentID, ResultsInbox, result); err != nil {
+	if err := durable.Cast(ctx, args.ParentID, result); err != nil {
 		return nil, fmt.Errorf("send result: %w", err)
 	}
-	return nil, nil
+	return durable.Done(), nil
 }
 
 // --- main ---

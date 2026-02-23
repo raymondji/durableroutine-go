@@ -25,16 +25,18 @@ func Start[Args RoutineArgs](c Client, ctx context.Context, id string, args Args
 }
 
 // ClientCast sends a fire-and-forget message to a routine's inbox.
-func ClientCast[M any](c Client, ctx context.Context, id string,
-	inbox Inbox[M], msg M) error {
-	return c.cast(ctx, id, inbox.Name, msg)
+// The inbox name is derived from msg.Kind().
+func ClientCast[M Message](c Client, ctx context.Context, id string, msg M) error {
+	return c.cast(ctx, id, msg.Kind(), msg)
 }
 
 // ClientCall sends a synchronous request to a routine's method and waits
-// for the response.
-func ClientCall[Req, Resp any](c Client, ctx context.Context, id string,
-	method Method[Req, Resp], req Req) (Resp, error) {
-	raw, err := c.call(ctx, id, method.Name, req)
+// for the response. The method name is derived from req.Kind(). The handler
+// parameter is used only for type inference of the response type — it is not
+// called. Pass the same function registered with AddCallHandler.
+func ClientCall[S HandlerState, Req Message, Resp any](c Client, ctx context.Context, id string,
+	handler CallFunc[S, Req, Resp], req Req) (Resp, error) {
+	raw, err := c.call(ctx, id, req.Kind(), req)
 	if err != nil {
 		var zero Resp
 		return zero, err
@@ -43,9 +45,12 @@ func ClientCall[Req, Resp any](c Client, ctx context.Context, id string,
 }
 
 // ClientQuery sends a synchronous read-only query to a routine.
-func ClientQuery[Req, Resp any](c Client, ctx context.Context, id string,
-	query Query[Req, Resp], req Req) (Resp, error) {
-	raw, err := c.query(ctx, id, query.Name, req)
+// The query name is derived from req.Kind(). The handler parameter is used
+// only for type inference of the response type — it is not called.
+// Pass the same function registered with AddQueryHandler.
+func ClientQuery[S HandlerState, Req Message, Resp any](c Client, ctx context.Context, id string,
+	handler QueryFunc[S, Req, Resp], req Req) (Resp, error) {
+	raw, err := c.query(ctx, id, req.Kind(), req)
 	if err != nil {
 		var zero Resp
 		return zero, err

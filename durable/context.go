@@ -30,9 +30,10 @@ func (c *Context) Spawn(routineID string, args RoutineArgs) {
 	})
 }
 
-// Cast sends a fire-and-forget message to a named inbox on another routine.
-// It can be called from within any handler to communicate with other running
-// routines. Maps to a Temporal Signal.
-func Cast[M any](ctx *Context, routineID string, inbox Inbox[M], msg M) error {
+// Cast sends a fire-and-forget message to another routine's inbox.
+// The inbox name is derived from msg.Kind(). It can be called from within
+// any handler to communicate with other running routines.
+// Maps to a Temporal Signal.
+func Cast[M Message](ctx *Context, routineID string, msg M) error {
 	panic("not implemented")
 }

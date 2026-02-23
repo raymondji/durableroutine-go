@@ -13,7 +13,7 @@ import (
 	"github.com/raymondji/durableroutine/durable"
 )
 
-// --- Args & descriptors ---
+// --- Args ---
 
 type BookingArgs struct {
 	UserID string
@@ -22,11 +22,6 @@ type BookingArgs struct {
 
 func (BookingArgs) Kind() string { return "booking" }
 
-var PaymentInbox = durable.Inbox[PaymentInfo]{Name: "payment"}
-var ShippingInbox = durable.Inbox[ShippingInfo]{Name: "shipping"}
-var CancelMethod = durable.Method[CancelReq, CancelResp]{Name: "cancel"}
-var GetStatus = durable.Query[StatusReq, StatusResp]{Name: "get-status"}
-
 // --- Messages ---
 
 type PaymentInfo struct {
@@ -34,16 +29,26 @@ type PaymentInfo struct {
 	Expiry     string
 }
 
+func (PaymentInfo) Kind() string { return "payment" }
+
 type ShippingInfo struct {
 	Address string
 	City    string
 	Zip     string
 }
 
+func (ShippingInfo) Kind() string { return "shipping" }
+
 type CancelReq struct{ Reason string }
+
+func (CancelReq) Kind() string { return "cancel" }
+
 type CancelResp struct{ Confirmed bool }
 
 type StatusReq struct{}
+
+func (StatusReq) Kind() string { return "get-status" }
+
 type StatusResp struct {
 	Status    string
 	PaymentID string
@@ -76,9 +81,9 @@ func (s *BookingService) Handle(ctx *durable.Context, args BookingArgs) (*durabl
 	fmt.Printf("reserving item %s for user %s\n", args.ItemID, args.UserID)
 	reserved := ReservedState{UserID: args.UserID, ItemID: args.ItemID}
 	return durable.Select(
-		durable.OnCast(PaymentInbox, s.ProcessPayment, reserved),
-		durable.OnCall(CancelMethod, s.HandleCancel, reserved),
-		durable.OnQuery(GetStatus, s.GetReservedStatus, reserved),
+		durable.OnCast(s.ProcessPayment, reserved),
+		durable.OnCall(s.HandleCancel, reserved),
+		durable.OnQuery(s.GetReservedStatus, reserved),
 		durable.AfterFunc(15*time.Minute, s.HandleReservationTimeout, reserved),
 	), nil
 }
@@ -87,15 +92,15 @@ func (s *BookingService) ProcessPayment(ctx *durable.Context, state ReservedStat
 	fmt.Printf("charging card ending in %s\n", msg.CardNumber[len(msg.CardNumber)-4:])
 	paid := PaidState{UserID: state.UserID, ItemID: state.ItemID, PaymentID: "PAY-123"}
 	return durable.Select(
-		durable.OnCast(ShippingInbox, s.ProcessShipping, paid),
-		durable.OnQuery(GetStatus, s.GetPaidStatus, paid),
+		durable.OnCast(s.ProcessShipping, paid),
+		durable.OnQuery(s.GetPaidStatus, paid),
 		durable.AfterFunc(24*time.Hour, s.HandleShippingTimeout, paid),
 	), nil
 }
 
 func (s *BookingService) ProcessShipping(ctx *durable.Context, state PaidState, msg ShippingInfo) (*durable.Suspend, error) {
 	fmt.Printf("shipping to %s, %s %s\n", msg.Address, msg.City, msg.Zip)
-	return nil, nil // routine complete
+	return durable.Done(), nil // routine complete
 }
 
 // Query handlers: read-only, state by value, don't advance state machine.
@@ -109,7 +114,7 @@ func (s *BookingService) GetPaidStatus(ctx *durable.Context, state PaidState, _ 
 
 // Call handler: advances state machine, returns response to caller.
 func (s *BookingService) HandleCancel(ctx *durable.Context, _ ReservedState, _ CancelReq) (CancelResp, *durable.Suspend, error) {
-	return CancelResp{Confirmed: true}, nil, nil // routine complete
+	return CancelResp{Confirmed: true}, durable.Done(), nil // routine complete
 }
 
 func (s *BookingService) HandleReservationTimeout(ctx *durable.Context, _ ReservedState) (*durable.Suspend, error) {
@@ -155,14 +160,14 @@ func main() {
 	}
 
 	// Query the current status.
-	status, err := durable.ClientQuery(client, ctx, "booking-123", GetStatus, StatusReq{})
+	status, err := durable.ClientQuery(client, ctx, "booking-123", svc.GetReservedStatus, StatusReq{})
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Printf("status: %s\n", status.Status)
 
 	// Send payment info.
-	if err := durable.ClientCast(client, ctx, "booking-123", PaymentInbox, PaymentInfo{
+	if err := durable.ClientCast(client, ctx, "booking-123", PaymentInfo{
 		CardNumber: "4111111111111234",
 		Expiry:     "12/27",
 	}); err != nil {
@@ -170,7 +175,7 @@ func main() {
 	}
 
 	// Send shipping info.
-	if err := durable.ClientCast(client, ctx, "booking-123", ShippingInbox, ShippingInfo{
+	if err := durable.ClientCast(client, ctx, "booking-123", ShippingInfo{
 		Address: "123 Main St",
 		City:    "Springfield",
 		Zip:     "62704",

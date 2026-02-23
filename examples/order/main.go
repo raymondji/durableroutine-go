@@ -12,15 +12,11 @@ import (
 	"github.com/raymondji/durableroutine/durable"
 )
 
-// --- Args & descriptors ---
+// --- Args ---
 
 type OrderArgs struct{}
 
 func (OrderArgs) Kind() string { return "order" }
-
-var PlaceOrderInbox = durable.Inbox[PlaceOrderReq]{Name: "place"}
-var CancelOrderInbox = durable.Inbox[CancelOrderReq]{Name: "cancel"}
-var GetOrderStatus = durable.Query[StatusReq, StatusResp]{Name: "get-order-status"}
 
 // --- Messages ---
 
@@ -31,11 +27,18 @@ type PlaceOrderReq struct {
 	Total         float64
 }
 
+func (PlaceOrderReq) Kind() string { return "place" }
+
 type CancelOrderReq struct {
 	Reason string
 }
 
+func (CancelOrderReq) Kind() string { return "cancel" }
+
 type StatusReq struct{}
+
+func (StatusReq) Kind() string { return "get-order-status" }
+
 type StatusResp struct {
 	Status  string
 	OrderID string
@@ -62,8 +65,8 @@ type OrderService struct {
 
 func (s *OrderService) Handle(ctx *durable.Context, _ OrderArgs) (*durable.Suspend, error) {
 	return durable.Select(
-		durable.OnCast(PlaceOrderInbox, s.HandlePlace, PendingState{}),
-		durable.OnQuery(GetOrderStatus, s.QueryPendingStatus, PendingState{}),
+		durable.OnCast(s.HandlePlace, PendingState{}),
+		durable.OnQuery(s.QueryPendingStatus, PendingState{}),
 		durable.AfterFunc(30*time.Minute, s.HandleTimeout, PendingState{}),
 	), nil
 }
@@ -73,25 +76,25 @@ func (s *OrderService) HandlePlace(ctx *durable.Context, _ PendingState, req Pla
 	placed := PlacedState{OrderID: req.OrderID, Items: req.Items}
 
 	return durable.Select(
-		durable.OnCast(CancelOrderInbox, s.HandleCancel, placed),
-		durable.OnQuery(GetOrderStatus, s.QueryPlacedStatus, placed),
+		durable.OnCast(s.HandleCancel, placed),
+		durable.OnQuery(s.QueryPlacedStatus, placed),
 		durable.AfterFunc(24*time.Hour, s.HandleShip, placed),
 	), nil
 }
 
 func (s *OrderService) HandleCancel(ctx *durable.Context, state PlacedState, _ CancelOrderReq) (*durable.Suspend, error) {
 	fmt.Printf("cancelling order %s\n", state.OrderID)
-	return nil, nil
+	return durable.Done(), nil
 }
 
 func (s *OrderService) HandleShip(ctx *durable.Context, state PlacedState) (*durable.Suspend, error) {
 	fmt.Printf("shipping order %s\n", state.OrderID)
-	return nil, nil
+	return durable.Done(), nil
 }
 
 func (s *OrderService) HandleTimeout(ctx *durable.Context, _ PendingState) (*durable.Suspend, error) {
 	fmt.Println("order timed out, no placement received")
-	return nil, nil
+	return durable.Done(), nil
 }
 
 func (s *OrderService) QueryPendingStatus(ctx *durable.Context, _ PendingState, _ StatusReq) (StatusResp, error) {
@@ -131,13 +134,13 @@ func main() {
 		log.Fatal(err)
 	}
 
-	status, err := durable.ClientQuery(client, ctx, "order-123", GetOrderStatus, StatusReq{})
+	status, err := durable.ClientQuery(client, ctx, "order-123", svc.QueryPendingStatus, StatusReq{})
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Printf("status: %s\n", status.Status)
 
-	if err := durable.ClientCast(client, ctx, "order-123", PlaceOrderInbox, PlaceOrderReq{
+	if err := durable.ClientCast(client, ctx, "order-123", PlaceOrderReq{
 		OrderID:       "ORD-456",
 		Items:         []string{"widget-a", "widget-b"},
 		PaymentMethod: "card",

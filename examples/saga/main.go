@@ -53,7 +53,7 @@ func (s *TripService) Handle(ctx *durable.Context, args TripArgs) (*durable.Susp
 	}
 
 	fmt.Printf("trip %s fully booked\n", args.TripID)
-	return nil, nil
+	return durable.Done(), nil
 }
 
 // --- Service calls (replace with real API clients) ---

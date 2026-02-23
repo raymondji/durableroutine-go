@@ -20,35 +20,29 @@ type RoutineArgs interface {
 	HandlerState
 }
 
-// ─── Descriptors (compile-time type safety) ───
-
-// Inbox is a typed descriptor for Cast (fire-and-forget) messages.
-// Maps to a Temporal Signal.
-type Inbox[M any] struct{ Name string }
-
-// Method is a typed descriptor for Call (synchronous request-response).
-// Maps to a Temporal Update.
-type Method[Req, Resp any] struct{ Name string }
-
-// Query is a typed descriptor for Query (synchronous read-only).
-// Maps to a Temporal Query.
-type Query[Req, Resp any] struct{ Name string }
+// Message is the interface that all message and request types must implement.
+// Kind returns a stable string used as the Temporal signal/update/query name
+// and as part of the handler registration key. This decouples routing from
+// Go type names.
+type Message interface {
+	Kind() string
+}
 
 // ─── Handler function signatures ───
 
 // HandlerFunc is a function that receives state and returns a Suspend
 // describing what the routine should wait for next.
-// Returning a nil *Suspend completes the routine.
+// Return Done() to complete the routine.
 type HandlerFunc[State HandlerState] func(ctx *Context, state State) (*Suspend, error)
 
 // CastFunc handles a fire-and-forget message (Signal).
-type CastFunc[State HandlerState, M any] func(ctx *Context, state State, msg M) (*Suspend, error)
+type CastFunc[State HandlerState, M Message] func(ctx *Context, state State, msg M) (*Suspend, error)
 
 // CallFunc handles a synchronous request-response (Update).
-type CallFunc[State HandlerState, Req, Resp any] func(ctx *Context, state State, req Req) (Resp, *Suspend, error)
+type CallFunc[State HandlerState, Req Message, Resp any] func(ctx *Context, state State, req Req) (Resp, *Suspend, error)
 
 // QueryFunc handles a synchronous read-only query (Query).
-type QueryFunc[State HandlerState, Req, Resp any] func(ctx *Context, state State, req Req) (Resp, error)
+type QueryFunc[State HandlerState, Req Message, Resp any] func(ctx *Context, state State, req Req) (Resp, error)
 
 // ─── Worker registry ───
 
@@ -79,20 +73,23 @@ func AddHandler[S HandlerState](w *Worker, h HandlerFunc[S], opts ...HandlerOpti
 	addEntry(w, "handler:"+zero.Kind(), h, opts)
 }
 
-// AddCastHandler registers a CastFunc for a state Kind.
-func AddCastHandler[S HandlerState, M any](w *Worker, h CastFunc[S, M], opts ...HandlerOption) {
-	var zero S
-	addEntry(w, "cast:"+zero.Kind(), h, opts)
+// AddCastHandler registers a CastFunc keyed by state Kind and message Kind.
+func AddCastHandler[S HandlerState, M Message](w *Worker, h CastFunc[S, M], opts ...HandlerOption) {
+	var zeroS S
+	var zeroM M
+	addEntry(w, "cast:"+zeroS.Kind()+":"+zeroM.Kind(), h, opts)
 }
 
-// AddCallHandler registers a CallFunc for a state Kind.
-func AddCallHandler[S HandlerState, Req, Resp any](w *Worker, h CallFunc[S, Req, Resp], opts ...HandlerOption) {
-	var zero S
-	addEntry(w, "call:"+zero.Kind(), h, opts)
+// AddCallHandler registers a CallFunc keyed by state Kind and request Kind.
+func AddCallHandler[S HandlerState, Req Message, Resp any](w *Worker, h CallFunc[S, Req, Resp], opts ...HandlerOption) {
+	var zeroS S
+	var zeroReq Req
+	addEntry(w, "call:"+zeroS.Kind()+":"+zeroReq.Kind(), h, opts)
 }
 
-// AddQueryHandler registers a QueryFunc for a state Kind.
-func AddQueryHandler[S HandlerState, Req, Resp any](w *Worker, h QueryFunc[S, Req, Resp], opts ...HandlerOption) {
-	var zero S
-	addEntry(w, "query:"+zero.Kind(), h, opts)
+// AddQueryHandler registers a QueryFunc keyed by state Kind and request Kind.
+func AddQueryHandler[S HandlerState, Req Message, Resp any](w *Worker, h QueryFunc[S, Req, Resp], opts ...HandlerOption) {
+	var zeroS S
+	var zeroReq Req
+	addEntry(w, "query:"+zeroS.Kind()+":"+zeroReq.Kind(), h, opts)
 }
