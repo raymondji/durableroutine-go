@@ -1,11 +1,7 @@
 package durable
 
-// Worker registers process definitions and polls Temporal for work.
+// Worker registers routine definitions and polls Temporal for work.
 type Worker interface {
-	// Register adds a process definition to this worker.
-	// process should be a *Process[S] for some state type S.
-	Register(process any)
-
 	// Start begins polling. It blocks until Stop is called or an error occurs.
 	Start() error
 
@@ -13,8 +9,9 @@ type Worker interface {
 	Stop()
 }
 
-// NewWorker creates a Worker that polls the given task queue.
+// NewWorker creates a Worker that polls the given task queue using the
+// provided routine handler registry.
 // TODO: accept Temporal connection options.
-func NewWorker(taskQueue string) Worker {
+func NewWorker(taskQueue string, workers *Workers) Worker {
 	panic("not implemented")
 }

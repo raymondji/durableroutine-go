@@ -25,58 +25,131 @@ The suspension-based model solves this cleanly: **user handler functions run as 
 This means:
 - User code is always an activity — write normal Go, call databases, use `time.Now()`, whatever you want
 - The workflow code is 100% library-owned and never changes, so replay is never broken
-- State is an explicit, serialisable struct — trivial to carry across continue-as-new boundaries
+- State is explicit and serialisable — trivial to carry across continue-as-new boundaries
+
+### Actor Model Semantics
+
+Each durable routine is an actor with a mailbox. Communication follows actor model conventions:
+
+| Concept | Temporal primitive | Blocks caller? | Mutates state? | Advances state machine? |
+|---|---|---|---|---|
+| `OnCast` (Inbox) | Signal | No (fire-and-forget) | Yes | Yes |
+| `OnCall` (Method) | Update | Yes (waits for response) | Yes | Yes |
+| `OnQuery` (Query) | Query | Yes (instant response) | No (value semantics) | No |
+| `AfterFunc` | Timer | N/A | Yes | Yes |
+
+**Rules:**
+- Inboxes belong to a routine. Only the owning routine receives from its inboxes.
+- Cast (Signal): fire-and-forget, never blocks. Clients and routines can Cast.
+- Call (Update): synchronous request-response. Only clients can Call.
+- Query (Query): synchronous read-only. Only clients can Query.
+- Routines can only Cast to each other — no cross-workflow blocking.
+
+### Per-Handler State
+
+There is **no shared state type `S`** across handlers. Each handler declares its own state type. State flows forward explicitly through Suspend cases:
+
+```go
+func reserveItem(ctx *durable.Context, args BookingArgs) (*durable.Suspend, error) {
+    reserved := ReservedState{UserID: args.UserID, ItemID: args.ItemID}
+    return durable.Select(
+        durable.OnCast(PaymentInbox, processPayment, reserved),
+    ), nil
+}
+
+func processPayment(ctx *durable.Context, state ReservedState, msg PaymentInfo) (*durable.Suspend, error) {
+    paid := PaidState{UserID: state.UserID, ItemID: state.ItemID, PaymentID: "PAY-123"}
+    return durable.Select(
+        durable.OnCast(ShippingInbox, processShipping, paid),
+    ), nil
+}
+```
+
+This eliminates the "bloated shared struct" problem where every step's fields accumulate in a single type.
 
 ### API
 
-The API is defined in the [`durable/`](durable/) package. The key types are:
+The API is defined in the [`durable/`](durable/) package:
 
-- **`Process[S]`** ([`durable/process.go`](durable/process.go)) — Defines a process with a name, state initialiser, and initial handler
-- **`HandlerFunc[S]`** — `func(ctx, *S) (*Suspend[S], error)` — a handler that receives state and returns the next suspension
-- **`MessageHandlerFunc[S, M]`** — like `HandlerFunc` but also receives a typed message
-- **`Suspend[S]`** ([`durable/suspend.go`](durable/suspend.go)) — Describes what to wait for next
-- **`After(duration, handler)`** — suspend until a timer fires
+#### Routine Identity (River-style)
+
+Routine types are identified by their args implementing `RoutineArgs`:
+
+- **`RoutineArgs`** — interface with `Kind() string`, identifies the routine type (Temporal workflow type)
+- **`Workers`** / **`NewWorkers()`** — type-safe handler registry
+- **`AddRoutine[Args](workers, handler)`** — registers a handler for a routine kind
+
+#### Descriptors (compile-time type safety)
+
+- **`Inbox[M]`** — typed descriptor for Cast messages (maps to Signal)
+- **`Method[Req, Resp]`** — typed descriptor for Call (maps to Update)
+- **`Query[Req, Resp]`** — typed descriptor for Query (maps to Query)
+
+#### Handler Signatures
+
+- **`HandlerFunc[State]`** — `func(ctx *Context, state State) (*Suspend, error)`
+- **`CastFunc[State, M]`** — `func(ctx *Context, state State, msg M) (*Suspend, error)`
+- **`CallFunc[State, Req, Resp]`** — `func(ctx *Context, state State, req Req) (Resp, *Suspend, error)`
+- **`QueryFunc[State, Req, Resp]`** — `func(ctx *Context, state State, req Req) (Resp, error)`
+
+#### Suspend Constructors
+
+- **`After(duration, handler, state)`** — suspend until a timer fires
 - **`Select(cases...)`** — wait for the first of several events
-- **`Receive(channel, handler)`** — a case that fires when a message arrives
-- **`AfterFunc(duration, handler)`** — a timer case for use inside Select
-- **`Spawn`** — describes a child process to start (ProcessID, Process, Args)
-- **`Suspend.WithSpawns(...)`** — attach child process spawns to any Suspend; children start when the Suspend is entered
-- **`SendMessage(ctx, processID, channel, msg)`** ([`durable/send.go`](durable/send.go)) — send a message to another process's channel from within a handler, like `ch <- msg`
-- **`ProcessID(ctx)`** ([`durable/send.go`](durable/send.go)) — get the current process's ID, so you can pass it to children as a "reply address"
-- **`Client`** ([`durable/client.go`](durable/client.go)) — Starts processes and sends messages
-- **`Worker`** ([`durable/worker.go`](durable/worker.go)) — Registers processes and polls for work
+- **`AfterFunc(duration, handler, state)`** — a timer case for use inside Select
+- **`OnCast(inbox, handler, state)`** — fires when a Cast message arrives
+- **`OnCall(method, handler, state)`** — fires when a client calls a method
+- **`OnQuery(query, handler, state)`** — fires when a client queries
+
+#### Context
+
+- **`Context`** — wraps `context.Context` with routine capabilities
+- **`ctx.RoutineID()`** — get the current routine's ID (reply address for children)
+- **`ctx.Spawn(id, args)`** — spawn a child routine (args.Kind() determines handler)
+- **`Cast[M](ctx, routineID, inbox, msg)`** — send a fire-and-forget message to another routine
+
+#### Client (typed top-level functions)
+
+- **`Start[Args](client, ctx, id, args)`** — start a new routine instance (args.Kind() determines handler)
+- **`ClientCast[M](client, ctx, id, inbox, msg)`** — fire-and-forget message to a routine
+- **`ClientCall[Req, Resp](client, ctx, id, method, req)`** — synchronous request-response
+- **`ClientQuery[Req, Resp](client, ctx, id, query, req)`** — synchronous read-only query
+
+#### Worker
+
+- **`NewWorker(taskQueue, workers)`** — creates a worker using a handler registry
 
 ### Examples
 
 See the [`examples/`](examples/) directory:
 
-- **[`examples/reminder/`](examples/reminder/main.go)** — A process that sends a sequence of emails with durable sleeps between them. Demonstrates `After` for simple timer-based progression.
-- **[`examples/order/`](examples/order/main.go)** — An order lifecycle process that waits for placement, handles cancellation or auto-ships after a window. Demonstrates `Select`, `Receive`, and `AfterFunc`.
-- **[`examples/fanout/`](examples/fanout/main.go)** — Fan-out/fan-in mirroring Go's goroutine+channel pattern. A parent spawns child processes via `WithSpawns`, passes its own process ID as a reply address, and each child sends its result back via `durable.SendMessage`. The parent collects results one at a time via `Receive`.
-- **[`examples/pipeline/`](examples/pipeline/main.go)** — Producer-consumer pipeline. A producer process sends many items to a consumer's channel via `durable.SendMessage`, then signals completion. The consumer receives items one at a time and processes each.
-- **[`examples/saga/`](examples/saga/main.go)** — SAGA compensation pattern for a trip booking (flight + hotel + car). Sequential calls with compensation on failure — just normal Go error handling.
-- **[`examples/booking/`](examples/booking/main.go)** — Multi-step client-driven process. Client starts a process with args, then drives each step by sending typed messages (`PaymentInfo`, `ShippingInfo`). Each step suspends with its own `Receive`, so State stays lean.
+- **[`examples/reminder/`](examples/reminder/main.go)** — Timer chain with per-handler state. Demonstrates `After` for simple timer-based progression.
+- **[`examples/order/`](examples/order/main.go)** — Order lifecycle with Cast + timer + Query. Demonstrates `OnCast`, `OnQuery`, `AfterFunc`, and `Select`.
+- **[`examples/booking/`](examples/booking/main.go)** — Multi-step client-driven routine with Cast + Call + Query. Client sends payment/shipping info via `ClientCast`, can cancel via `ClientCall`, and check status via `ClientQuery`.
+- **[`examples/fanout/`](examples/fanout/main.go)** — Fan-out/fan-in using child routines and routine-to-routine Cast. Parent spawns children via `ctx.Spawn`, children send results back via `durable.Cast`. Parent collects via `OnCast`.
+- **[`examples/pipeline/`](examples/pipeline/main.go)** — Producer-consumer pipeline. Producer sends items to consumer via `durable.Cast`. Consumer processes items one at a time via `OnCast`.
+- **[`examples/saga/`](examples/saga/main.go)** — SAGA compensation pattern. Sequential service calls with compensation on failure — just normal Go error handling.
 
 ### How Common Patterns Map
 
 | Pattern | Suspension-based approach |
 |---|---|
-| **Do something, sleep, do something** | Handler does work, returns `After(duration, nextHandler)`. Each handler is an activity. See [`examples/reminder/`](examples/reminder/main.go). |
-| **Wait for one of several events** | Handler returns `Select(Receive(...), AfterFunc(...))`. The runtime sets up a Temporal selector. See [`examples/order/`](examples/order/main.go). |
-| **Fan-out / fan-in** | Parent spawns children via `WithSpawns`, passing its own process ID as a reply address. Each child calls `durable.SendMessage` to send its result back. Parent collects via `Receive`, one at a time — like reading from a Go channel. See [`examples/fanout/`](examples/fanout/main.go). |
-| **Producer-consumer** | Producer process calls `durable.SendMessage` in a loop to send items to a consumer's channel. Consumer uses `Select(Receive("items", ...), Receive("done", ...))` to process items and detect completion. See [`examples/pipeline/`](examples/pipeline/main.go). |
+| **Do something, sleep, do something** | Handler does work, returns `After(duration, nextHandler, state)`. Each handler is an activity. See [`examples/reminder/`](examples/reminder/main.go). |
+| **Wait for one of several events** | Handler returns `Select(OnCast(...), OnCall(...), OnQuery(...), AfterFunc(...))`. The runtime sets up a Temporal selector. See [`examples/order/`](examples/order/main.go). |
+| **Fan-out / fan-in** | Parent spawns children via `ctx.Spawn(id, args)`. Each child calls `durable.Cast(ctx, parentID, inbox, result)` to send results back. Parent collects via `OnCast`, one at a time. See [`examples/fanout/`](examples/fanout/main.go). |
+| **Producer-consumer** | Producer calls `durable.Cast` in a loop to send items. Consumer uses `Select(OnCast(ItemsInbox, ...), OnCast(DoneInbox, ...))` to process items and detect completion. See [`examples/pipeline/`](examples/pipeline/main.go). |
 | **SAGA compensation** | Handler calls services sequentially; on error, calls compensation. All normal Go error handling. See [`examples/saga/`](examples/saga/main.go). |
-| **Start and wait for result** | `Client.Start` then `Client.GetResult` blocks until the process completes and returns the final state. See [`examples/booking/`](examples/booking/main.go). |
-| **Async fire-and-forget** | `Client.SendMessage` to a channel; the process receives it when it reaches a `Receive` case. |
+| **Request-response** | Client uses `ClientCall(client, ctx, id, method, req)` to invoke a method that returns a typed response. |
+| **Read-only status check** | Client uses `ClientQuery(client, ctx, id, query, req)` for instant, non-mutating reads. |
 
 ### Implementation Sketch
 
-Each `Process[S]` maps to a single Temporal workflow. The workflow function is entirely library-generated:
+Each routine maps to a single Temporal workflow. The workflow function is entirely library-generated:
 
 ```
-ProcessWorkflow(ctx, processID):
-    state = initState()
-    handler = process.Initial
+RoutineWorkflow(ctx, routineID):
+    state = args (deserialized from workflow input)
+    handler = registered handler for args.Kind()
 
     loop:
         // Run the handler as an activity
@@ -85,27 +158,35 @@ ProcessWorkflow(ctx, processID):
         if suspend == nil: complete workflow
 
         // Interpret the Suspend declaratively
-        switch suspend:
-            case After(d, next):
-                workflow.Sleep(ctx, d)
-                handler = next
-            case Select(cases...):
-                sel = workflow.NewSelector(ctx)
-                for each case:
-                    if case.timer:
-                        sel.AddTimer(d, func() { handler = case.handler })
-                    if case.channel:
-                        sel.AddReceive(signalChan(case.channel), func(msg) {
-                            handler = case.handler  // with msg bound
-                        })
-                sel.Select(ctx)
-        // If suspend has child spawns, start them first
-        if suspend.childSpawns:
-            for each spawn in suspend.childSpawns:
-                childFuture = workflow.ExecuteChildWorkflow(ctx, spawn.Process, spawn.Args)
-                // When child completes, deliver its final state to the parent
-                // as a signal on spawn.ResultChannel
-                go onChildComplete(childFuture, spawn.ResultChannel)
+        for each case in suspend.cases:
+            if case.timer:
+                sel.AddTimer(d, func() {
+                    handler = case.handler
+                    state = case.state
+                })
+            if case.inbox (OnCast):
+                // Register a Signal handler
+                signalChan = workflow.GetSignalChannel(ctx, case.inboxName)
+                sel.AddReceive(signalChan, func(msg) {
+                    handler = case.handler  // with msg bound
+                    state = case.state
+                })
+            if case.method (OnCall):
+                // Register an Update handler
+                workflow.SetUpdateHandler(ctx, case.methodName, func(req) (resp, error) {
+                    resp, suspend, err = executeActivity(case.handler, case.state, req)
+                    return resp, err
+                })
+            if case.query (OnQuery):
+                // Register a Query handler (read-only, no activity needed)
+                workflow.SetQueryHandler(ctx, case.queryName, func(req) (resp, error) {
+                    return case.handler(case.state, req)
+                })
+        sel.Select(ctx)
+
+        // Handle child spawns from ctx.Spawn calls
+        for each spawn in ctx.spawnRequests:
+            workflow.ExecuteChildWorkflow(ctx, spawn.args.Kind(), spawn.args)
 
         // Check continue-as-new
         if shouldContinueAsNew():
@@ -114,9 +195,12 @@ ProcessWorkflow(ctx, processID):
 
 Key implementation details:
 - **Handlers run as activities** — no replay-safety concerns for user code
-- **State is explicit and serialisable** — the `*S` struct is the single source of truth, trivially carried across continue-as-new
+- **State is per-handler and serialisable** — each case carries its own state, trivially serialized
 - **The workflow loop is library code** — it never changes, so replay is never broken by user code changes
-- **Continue-as-new is trivial** — serialize `state` and a handler identifier, restart the loop
+- **Continue-as-new is trivial** — serialize current state and handler identifier, restart the loop
+- **Signal → OnCast**: buffered Temporal signals dispatched to the matching inbox handler
+- **Update → OnCall**: Temporal update handler runs the call handler as an activity, returns response
+- **Query → OnQuery**: Temporal query handler runs synchronously in workflow context (read-only)
 
 #### Automatic Continue-As-New
 
@@ -127,19 +211,16 @@ Because the workflow is a simple loop (run activity → interpret suspend → re
 3. Call `workflow.NewContinueAsNewError` with the serialized state
 4. The new execution resumes the loop with the same state and next handler
 
-This is dramatically simpler than the previous approach because:
-- State is a single explicit struct (no closure serialization)
-- There is no "program counter" problem — the next handler is an explicit function reference
-- No child workflows or goroutine futures to re-attach
-
 ### Tradeoffs
 
 **Advantages:**
 - User code has zero replay-safety constraints — handlers are pure activities
-- State is explicit and serialisable — makes continue-as-new trivial
+- Per-handler state eliminates bloated shared structs — each handler only carries what it needs
 - The workflow code is 100% library-owned — user code changes never break replay
 - Simple mental model: handler runs → returns what to wait for → runtime waits → next handler runs
-- Type-safe messages via `Receive[S, M]` with generics
+- Type-safe messages via `Inbox[M]`, `Method[Req, Resp]`, `Query[Req, Resp]` with generics
+- Call/Cast/Query maps cleanly to Temporal's Update/Signal/Query primitives
+- River-style registration: args types self-identify via `Kind()`, handlers registered at startup
 
 **Disadvantages:**
 - No linear top-to-bottom code for multi-step sequences — each step is a separate handler function connected via `After`. This is more verbose than `sleep(); doNext()` but eliminates the checkpointing problem entirely.
@@ -150,8 +231,7 @@ This is dramatically simpler than the previous approach because:
 ## Open Questions
 
 1. **Error handling and retries**: Handlers run as activities, so Temporal's activity retry policy applies. How should we expose retry configuration?
-3. **State size limits**: Temporal has payload size limits (~2MB default). Large state may need external storage.
-4. **Testing**: Should support a local/in-memory mode for unit testing without a Temporal server.
-5. **Observability**: How do we expose Temporal's native visibility (search attributes, workflow status) through the abstraction?
-6. **Handler identification for continue-as-new**: Need a strategy for identifying handler functions across continue-as-new boundaries (function names, registration, etc.).
-7. **Reply mechanism**: How should a handler send a response back to a waiting client? Could use a built-in reply channel or a separate mechanism.
+2. **State size limits**: Temporal has payload size limits (~2MB default). Large state may need external storage.
+3. **Testing**: Should support a local/in-memory mode for unit testing without a Temporal server.
+4. **Observability**: How do we expose Temporal's native visibility (search attributes, workflow status) through the abstraction?
+5. **Handler identification for continue-as-new**: Need a strategy for identifying handler functions across continue-as-new boundaries (function names, registration, etc.).

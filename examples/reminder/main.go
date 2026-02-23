@@ -1,5 +1,6 @@
-// Command reminder demonstrates a simple durable process that sends a
+// Command reminder demonstrates a simple durable routine that sends a
 // sequence of emails with durable sleeps between them.
+// Each handler declares its own state type — state flows forward via After().
 package main
 
 import (
@@ -11,48 +12,28 @@ import (
 	"github.com/raymondji/durableroutine/durable"
 )
 
-// --- Args & state ---
+// --- Args ---
 
-// StartArgs is passed to Client.Start and used to initialize the state.
-type StartArgs struct {
+type ReminderArgs struct {
 	Email string
 }
 
-// State holds only what persists across steps.
-type State struct {
-	Email string
-	Step  string
+func (ReminderArgs) Kind() string { return "reminder" }
+
+// --- Handlers ---
+
+func sendInitial(ctx *durable.Context, args ReminderArgs) (*durable.Suspend, error) {
+	fmt.Printf("sending initial email to %s\n", args.Email)
+	return durable.After(24*time.Hour, sendFollowUp, args), nil
 }
 
-// --- Process definition ---
-
-var process = durable.Process[State]{
-	Name: "reminder",
-	InitState: func(args any) State {
-		a := args.(StartArgs)
-		return State{Email: a.Email}
-	},
-	Initial: sendInitial,
+func sendFollowUp(ctx *durable.Context, args ReminderArgs) (*durable.Suspend, error) {
+	fmt.Printf("sending follow-up email to %s\n", args.Email)
+	return durable.After(7*24*time.Hour, sendFinal, args), nil
 }
 
-func sendInitial(ctx context.Context, state *State) (*durable.Suspend[State], error) {
-	fmt.Printf("sending initial email to %s\n", state.Email)
-	state.Step = "initial_sent"
-
-	return durable.After(24*time.Hour, sendFollowUp), nil
-}
-
-func sendFollowUp(ctx context.Context, state *State) (*durable.Suspend[State], error) {
-	fmt.Printf("sending follow-up email to %s\n", state.Email)
-	state.Step = "followup_sent"
-
-	return durable.After(7*24*time.Hour, sendFinal), nil
-}
-
-func sendFinal(ctx context.Context, state *State) (*durable.Suspend[State], error) {
-	fmt.Printf("sending final email to %s\n", state.Email)
-	state.Step = "complete"
-
+func sendFinal(ctx *durable.Context, args ReminderArgs) (*durable.Suspend, error) {
+	fmt.Printf("sending final email to %s\n", args.Email)
 	return nil, nil
 }
 
@@ -61,8 +42,10 @@ func sendFinal(ctx context.Context, state *State) (*durable.Suspend[State], erro
 func main() {
 	ctx := context.Background()
 
-	w := durable.NewWorker("reminder-queue")
-	w.Register(process)
+	workers := durable.NewWorkers()
+	durable.AddRoutine(workers, sendInitial)
+
+	w := durable.NewWorker("reminder-queue", workers)
 	go func() {
 		if err := w.Start(); err != nil {
 			log.Fatal(err)
@@ -71,13 +54,10 @@ func main() {
 	defer w.Stop()
 
 	client := durable.NewClient()
-	if err := client.Start(ctx, "reminder-user-42", process, StartArgs{Email: "user@example.com"}); err != nil {
+	if err := durable.Start(client, ctx, "reminder-user-42",
+		ReminderArgs{Email: "user@example.com"}); err != nil {
 		log.Fatal(err)
 	}
 
-	var result State
-	if err := client.GetResult(ctx, "reminder-user-42", &result); err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("reminder complete: step=%s\n", result.Step)
+	fmt.Println("reminder started, will send 3 emails over ~8 days")
 }

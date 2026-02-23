@@ -1,6 +1,6 @@
 // Command pipeline demonstrates a producer-consumer pattern between two
-// durable processes. The producer generates items one at a time and sends
-// each to the consumer via durable.SendMessage — exactly like a goroutine
+// durable routines. The producer generates items one at a time and sends
+// each to the consumer via durable.Cast — exactly like a goroutine
 // writing to a channel:
 //
 //	ch := make(chan Item)
@@ -9,7 +9,7 @@
 //	    process(item)
 //	}
 //
-// The producer and consumer are fully independent durable processes. Either
+// The producer and consumer are fully independent durable routines. Either
 // can crash and resume without losing messages (Temporal signals are durable).
 package main
 
@@ -21,108 +21,79 @@ import (
 	"github.com/raymondji/durableroutine/durable"
 )
 
-// --- Shared message types ---
+// --- Descriptors ---
+
+var ItemsInbox = durable.Inbox[Item]{Name: "items"}
+var DoneInbox = durable.Inbox[DoneMsg]{Name: "done"}
+
+// --- Types ---
 
 type Item struct {
 	Seq  int
 	Data string
 }
 
-// DoneMsg is a sentinel sent on the "done" channel to signal no more items.
 type DoneMsg struct{}
 
-// --- Producer process ---
-
 type ProducerArgs struct {
-	Items            []string
-	ConsumerProcessID string
+	Items             []string
+	ConsumerRoutineID string
 }
 
-type ProducerState struct {
-	Items            []string
-	ConsumerProcessID string
+func (ProducerArgs) Kind() string { return "producer" }
+
+type ConsumerArgs struct {
+	Name string
 }
 
-var producerProcess = durable.Process[ProducerState]{
-	Name: "producer",
-	InitState: func(args any) ProducerState {
-		a := args.(ProducerArgs)
-		return ProducerState{
-			Items:            a.Items,
-			ConsumerProcessID: a.ConsumerProcessID,
-		}
-	},
-	Initial: produce,
+func (ConsumerArgs) Kind() string { return "consumer" }
+
+type ConsumerState struct {
+	Name     string
+	Received []Item
 }
 
-// produce sends each item to the consumer's "items" channel, then sends a
-// DoneMsg on the "done" channel. Like a goroutine doing:
-//
-//	for i, s := range items { ch <- Item{i, s} }
-//	close(ch)  // we use a "done" signal instead of close
-func produce(ctx context.Context, state *ProducerState) (*durable.Suspend[ProducerState], error) {
-	for i, data := range state.Items {
+// --- Producer handler ---
+
+func produce(ctx *durable.Context, args ProducerArgs) (*durable.Suspend, error) {
+	for i, data := range args.Items {
 		item := Item{Seq: i, Data: data}
-		if err := durable.SendMessage(ctx, state.ConsumerProcessID, "items", item); err != nil {
+		if err := durable.Cast(ctx, args.ConsumerRoutineID, ItemsInbox, item); err != nil {
 			return nil, fmt.Errorf("send item %d: %w", i, err)
 		}
 		fmt.Printf("produced item %d: %s\n", i, data)
 	}
 
-	// Signal that production is complete.
-	if err := durable.SendMessage(ctx, state.ConsumerProcessID, "done", DoneMsg{}); err != nil {
+	if err := durable.Cast(ctx, args.ConsumerRoutineID, DoneInbox, DoneMsg{}); err != nil {
 		return nil, fmt.Errorf("send done: %w", err)
 	}
 	fmt.Println("producer finished")
 	return nil, nil
 }
 
-// --- Consumer process ---
+// --- Consumer handlers ---
 
-type ConsumerArgs struct {
-	Name string
-}
-
-type ConsumerState struct {
-	Name      string
-	Received  []Item
-	Completed bool
-}
-
-var consumerProcess = durable.Process[ConsumerState]{
-	Name: "consumer",
-	InitState: func(args any) ConsumerState {
-		a := args.(ConsumerArgs)
-		return ConsumerState{Name: a.Name}
-	},
-	Initial: waitForItems,
-}
-
-// waitForItems suspends until either an item or a done signal arrives.
-// This is like `for item := range ch` — we keep receiving until the
-// producer signals completion.
-func waitForItems(ctx context.Context, state *ConsumerState) (*durable.Suspend[ConsumerState], error) {
+func waitForItems(ctx *durable.Context, args ConsumerArgs) (*durable.Suspend, error) {
+	state := ConsumerState{Name: args.Name}
 	return durable.Select(
-		durable.Receive[ConsumerState, Item]("items", handleItem),
-		durable.Receive[ConsumerState, DoneMsg]("done", handleDone),
+		durable.OnCast(ItemsInbox, handleItem, state),
+		durable.OnCast(DoneInbox, handleDone, state),
 	), nil
 }
 
-func handleItem(ctx context.Context, state *ConsumerState, item Item) (*durable.Suspend[ConsumerState], error) {
+func handleItem(ctx *durable.Context, state ConsumerState, item Item) (*durable.Suspend, error) {
 	fmt.Printf("consumer %s received item %d: %s\n", state.Name, item.Seq, item.Data)
 	state.Received = append(state.Received, item)
 
-	// Keep waiting for more items.
 	return durable.Select(
-		durable.Receive[ConsumerState, Item]("items", handleItem),
-		durable.Receive[ConsumerState, DoneMsg]("done", handleDone),
+		durable.OnCast(ItemsInbox, handleItem, state),
+		durable.OnCast(DoneInbox, handleDone, state),
 	), nil
 }
 
-func handleDone(ctx context.Context, state *ConsumerState, _ DoneMsg) (*durable.Suspend[ConsumerState], error) {
-	state.Completed = true
+func handleDone(ctx *durable.Context, state ConsumerState, _ DoneMsg) (*durable.Suspend, error) {
 	fmt.Printf("consumer %s done, received %d items\n", state.Name, len(state.Received))
-	return nil, nil // process complete
+	return nil, nil
 }
 
 // --- main ---
@@ -130,9 +101,11 @@ func handleDone(ctx context.Context, state *ConsumerState, _ DoneMsg) (*durable.
 func main() {
 	ctx := context.Background()
 
-	w := durable.NewWorker("pipeline-queue")
-	w.Register(producerProcess)
-	w.Register(consumerProcess)
+	workers := durable.NewWorkers()
+	durable.AddRoutine(workers, produce)
+	durable.AddRoutine(workers, waitForItems)
+
+	w := durable.NewWorker("pipeline-queue", workers)
 	go func() {
 		if err := w.Start(); err != nil {
 			log.Fatal(err)
@@ -143,24 +116,18 @@ func main() {
 	client := durable.NewClient()
 
 	// Start the consumer first so it's ready to receive.
-	if err := client.Start(ctx, "consumer-1", consumerProcess, ConsumerArgs{
-		Name: "my-consumer",
-	}); err != nil {
+	if err := durable.Start(client, ctx, "consumer-1",
+		ConsumerArgs{Name: "my-consumer"}); err != nil {
 		log.Fatal(err)
 	}
 
 	// Start the producer, pointing it at the consumer.
-	if err := client.Start(ctx, "producer-1", producerProcess, ProducerArgs{
-		Items:            []string{"alpha", "bravo", "charlie", "delta"},
-		ConsumerProcessID: "consumer-1",
+	if err := durable.Start(client, ctx, "producer-1", ProducerArgs{
+		Items:             []string{"alpha", "bravo", "charlie", "delta"},
+		ConsumerRoutineID: "consumer-1",
 	}); err != nil {
 		log.Fatal(err)
 	}
 
-	// Wait for the consumer to finish processing all items.
-	var result ConsumerState
-	if err := client.GetResult(ctx, "consumer-1", &result); err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("pipeline complete: consumer received %d items\n", len(result.Received))
+	fmt.Println("pipeline started, producer sending items to consumer")
 }

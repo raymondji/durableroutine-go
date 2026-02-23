@@ -12,77 +12,42 @@ import (
 	"github.com/raymondji/durableroutine/durable"
 )
 
-// --- Args & state ---
+// --- Args ---
 
-type StartArgs struct {
+type TripArgs struct {
 	TripID      string
 	FlightID    string
 	HotelID     string
 	CarRentalID string
 }
 
-type State struct {
-	TripID      string
-	FlightID    string
-	HotelID     string
-	CarRentalID string
-	Status      string
+func (TripArgs) Kind() string { return "trip-booking" }
 
-	// Track what has been booked so we know what to compensate.
-	FlightConfirmation string
-	HotelConfirmation  string
-	CarConfirmation    string
-}
+// --- Handler ---
 
-// --- Process definition ---
-
-var process = durable.Process[State]{
-	Name: "trip-booking",
-	InitState: func(args any) State {
-		a := args.(StartArgs)
-		return State{
-			TripID:      a.TripID,
-			FlightID:    a.FlightID,
-			HotelID:     a.HotelID,
-			CarRentalID: a.CarRentalID,
-			Status:      "pending",
-		}
-	},
-	Initial: bookTrip,
-}
-
-// bookTrip attempts to book flight, hotel, and car in sequence.
-// If any step fails, it compensates the previously completed steps.
-func bookTrip(ctx context.Context, state *State) (*durable.Suspend[State], error) {
+func bookTrip(ctx *durable.Context, args TripArgs) (*durable.Suspend, error) {
 	// Step 1: Book flight
-	flightConf, err := bookFlight(ctx, state.FlightID)
+	flightConf, err := bookFlight(ctx, args.FlightID)
 	if err != nil {
-		state.Status = "failed"
 		return nil, fmt.Errorf("book flight: %w", err)
 	}
-	state.FlightConfirmation = flightConf
 
 	// Step 2: Book hotel — compensate flight on failure
-	hotelConf, err := bookHotel(ctx, state.HotelID)
+	hotelConf, err := bookHotel(ctx, args.HotelID)
 	if err != nil {
 		cancelFlight(ctx, flightConf)
-		state.Status = "failed"
 		return nil, fmt.Errorf("book hotel: %w", err)
 	}
-	state.HotelConfirmation = hotelConf
 
 	// Step 3: Book car — compensate hotel and flight on failure
-	carConf, err := bookCar(ctx, state.CarRentalID)
+	_, err = bookCar(ctx, args.CarRentalID)
 	if err != nil {
 		cancelHotel(ctx, hotelConf)
 		cancelFlight(ctx, flightConf)
-		state.Status = "failed"
 		return nil, fmt.Errorf("book car: %w", err)
 	}
-	state.CarConfirmation = carConf
 
-	state.Status = "confirmed"
-	fmt.Printf("trip %s fully booked\n", state.TripID)
+	fmt.Printf("trip %s fully booked\n", args.TripID)
 	return nil, nil
 }
 
@@ -122,8 +87,10 @@ func cancelHotel(_ context.Context, confirmation string) {
 func main() {
 	ctx := context.Background()
 
-	w := durable.NewWorker("saga-queue")
-	w.Register(process)
+	workers := durable.NewWorkers()
+	durable.AddRoutine(workers, bookTrip)
+
+	w := durable.NewWorker("saga-queue", workers)
 	go func() {
 		if err := w.Start(); err != nil {
 			log.Fatal(err)
@@ -133,7 +100,7 @@ func main() {
 
 	client := durable.NewClient()
 
-	if err := client.Start(ctx, "trip-789", process, StartArgs{
+	if err := durable.Start(client, ctx, "trip-789", TripArgs{
 		TripID:      "TRIP-789",
 		FlightID:    "FL-100",
 		HotelID:     "HT-200",
@@ -142,10 +109,5 @@ func main() {
 		log.Fatal(err)
 	}
 
-	var result State
-	if err := client.GetResult(ctx, "trip-789", &result); err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("trip booking complete: status=%s flight=%s hotel=%s car=%s\n",
-		result.Status, result.FlightConfirmation, result.HotelConfirmation, result.CarConfirmation)
+	fmt.Println("trip booking started")
 }
