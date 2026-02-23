@@ -1,4 +1,4 @@
-package durable
+package stateroutine
 
 import "time"
 
@@ -27,7 +27,7 @@ func Done[T any](result T) *Suspend[T] {
 type Case struct {
 	// Exactly one of the following is set (or none if immediate is true).
 	timerDuration *time.Duration
-	castName      string
+	sendName      string
 	callName      string
 
 	// immediate marks this case as firing without waiting. Used by Continue
@@ -40,19 +40,16 @@ type Case struct {
 	state any
 
 	// handlerKey is the composite key for looking up the registered handler
-	// (e.g., "cast:booking.reserved:payment"). Set by constructors for
+	// (e.g., "send:booking.reserved:payment"). Set by constructors for
 	// non-query cases.
 	handlerKey string
-
-	// retryPolicy overrides the handler-level retry policy for this case.
-	retryPolicy *RetryPolicy
 }
 
 // After builds a Suspend that waits for the given duration and then calls
 // handler with the provided state. This is the simple "sleep then continue" primitive.
-func After[S HandlerState, T any](d time.Duration, handler HandlerFunc[S, T], state S, opts ...CaseOption) *Suspend[T] {
+func After[S HandlerState, T any](d time.Duration, handler HandlerFunc[S, T], state S) *Suspend[T] {
 	return &Suspend[T]{
-		cases: []Case{OnTimer(d, handler, state, opts...)},
+		cases: []Case{OnTimer(d, handler, state)},
 	}
 }
 
@@ -61,7 +58,7 @@ func After[S HandlerState, T any](d time.Duration, handler HandlerFunc[S, T], st
 //
 // This prioritizes cases in the following way:
 // 1. Calls (caller is blocking, may modify state, should be fast)
-// 2. Casts and Timers
+// 2. Sends and Timers
 // 3. Default (if present, runs if no other cases are ready)
 func Select[T any](cases ...Case) *Suspend[T] {
 	return &Suspend[T]{cases: cases}
@@ -69,41 +66,35 @@ func Select[T any](cases ...Case) *Suspend[T] {
 
 // OnTimer returns a Case that fires after the given duration.
 // Use this inside a Select when you want a timer alongside other cases.
-func OnTimer[S HandlerState, T any](d time.Duration, handler HandlerFunc[S, T], state S, opts ...CaseOption) Case {
-	o := applyOpts(opts)
+func OnTimer[S HandlerState, T any](d time.Duration, handler HandlerFunc[S, T], state S) Case {
 	return Case{
 		timerDuration: &d,
 		state:         state,
 		handlerKey:    "handler:" + state.Kind(),
-		retryPolicy:   o.retryPolicy,
 	}
 }
 
-// OnCast returns a Case that fires when a message arrives on the inbox
+// OnSend returns a Case that fires when a message arrives on the inbox
 // identified by M.Kind(). The message is deserialized into type M before the
 // handler is called. Maps to a Temporal Signal handler.
-func OnCast[S HandlerState, M Message, T any](handler CastFunc[S, M, T], state S, opts ...CaseOption) Case {
+func OnSend[S HandlerState, M Message, T any](handler SendFunc[S, M, T], state S) Case {
 	var zeroM M
-	o := applyOpts(opts)
 	return Case{
-		castName:    zeroM.Kind(),
-		state:       state,
-		handlerKey:  "cast:" + state.Kind() + ":" + zeroM.Kind(),
-		retryPolicy: o.retryPolicy,
+		sendName:   zeroM.Kind(),
+		state:      state,
+		handlerKey: "send:" + state.Kind() + ":" + zeroM.Kind(),
 	}
 }
 
 // OnCall returns a Case that fires when a client calls the method identified
 // by Req.Kind(). The handler receives a request and returns a response.
 // Blocks the caller until the handler completes. Maps to a Temporal Update handler.
-func OnCall[S HandlerState, Req Message, Resp any, T any](handler CallFunc[S, Req, Resp, T], state S, opts ...CaseOption) Case {
+func OnCall[S HandlerState, Req Message, Resp any, T any](handler CallFunc[S, Req, Resp, T], state S) Case {
 	var zeroReq Req
-	o := applyOpts(opts)
 	return Case{
-		callName:    zeroReq.Kind(),
-		state:       state,
-		handlerKey:  "call:" + state.Kind() + ":" + zeroReq.Kind(),
-		retryPolicy: o.retryPolicy,
+		callName:   zeroReq.Kind(),
+		state:      state,
+		handlerKey: "call:" + state.Kind() + ":" + zeroReq.Kind(),
 	}
 }
 
@@ -111,14 +102,12 @@ func OnCall[S HandlerState, Req Message, Resp any, T any](handler CallFunc[S, Re
 // and immediately invokes the handler as the next activity, without waiting for
 // a timer, inbox, or method. Use this for multi-step processing where you want
 // explicit continue-as-new boundaries between steps.
-func Continue[S HandlerState, T any](handler HandlerFunc[S, T], state S, opts ...CaseOption) *Suspend[T] {
-	o := applyOpts(opts)
+func Continue[S HandlerState, T any](handler HandlerFunc[S, T], state S) *Suspend[T] {
 	return &Suspend[T]{
 		cases: []Case{{
-			immediate:   true,
-			state:       state,
-			handlerKey:  "handler:" + state.Kind(),
-			retryPolicy: o.retryPolicy,
+			immediate:  true,
+			state:      state,
+			handlerKey: "handler:" + state.Kind(),
 		}},
 	}
 }
@@ -126,13 +115,10 @@ func Continue[S HandlerState, T any](handler HandlerFunc[S, T], state S, opts ..
 // Default returns a Case that fires immediately if no other cases in the
 // Select are ready. Maps to Temporal's sel.AddDefault(). Use this to drain
 // buffered signals: if no signals are pending, the default case fires.
-func Default[S HandlerState, T any](handler HandlerFunc[S, T], state S, opts ...CaseOption) Case {
-	o := applyOpts(opts)
+func Default[S HandlerState, T any](handler HandlerFunc[S, T], state S) Case {
 	return Case{
-		immediate:   true,
-		state:       state,
-		handlerKey:  "handler:" + state.Kind(),
-		retryPolicy: o.retryPolicy,
+		immediate:  true,
+		state:      state,
+		handlerKey: "handler:" + state.Kind(),
 	}
 }
-

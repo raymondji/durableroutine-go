@@ -1,7 +1,11 @@
 // Command booking demonstrates a multi-step routine where the client drives
-// each step by sending typed messages. Shows Cast + Call + Query together
+// each step by sending typed messages. Shows Send + Call + Query together
 // with struct-based dependency injection.
 // Per-step state: BookingState → ReservedState → PaidState.
+//
+// Also demonstrates OnSendTerminalError: if payment processing fails after
+// all retries, the terminal error handler releases the reservation instead
+// of failing the entire routine.
 package main
 
 import (
@@ -10,7 +14,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/raymondji/durableroutine/durable"
+	"github.com/raymondji/stateroutine/stateroutine"
 )
 
 // --- State ---
@@ -45,14 +49,12 @@ func (CancelReq) Kind() string { return "cancel" }
 
 type CancelResp struct{ Confirmed bool }
 
-type StatusReq struct{}
-
-func (StatusReq) Kind() string { return "get-status" }
-
 type StatusResp struct {
 	Status    string
 	PaymentID string
 }
+
+func (StatusResp) Kind() string { return "get-status" }
 
 // --- Result ---
 
@@ -83,56 +85,57 @@ type BookingService struct {
 	// Injected dependencies would go here (e.g., DB, payment gateway).
 }
 
-func (s *BookingService) ReserveItem(ctx *durable.Context, state BookingState) (*durable.Suspend[BookingResult], error) {
+func (s *BookingService) ReserveItem(ctx *stateroutine.Context, state BookingState) (*stateroutine.Suspend[BookingResult], error) {
 	fmt.Printf("reserving item %s for user %s\n", state.ItemID, state.UserID)
 	reserved := ReservedState{UserID: state.UserID, ItemID: state.ItemID}
 
-	durable.SetQueryHandler(ctx, s.GetReservedStatus, reserved)
-	return durable.Select[BookingResult](
-		durable.OnCast(s.ProcessPayment, reserved),
-		durable.OnCall(s.CancelBooking, reserved),
-		durable.OnTimer(15*time.Minute, s.ExpireReservation, reserved),
+	stateroutine.SetQueryResult(ctx, StatusResp{Status: "reserved"})
+	return stateroutine.Select[BookingResult](
+		stateroutine.OnSend(s.ProcessPayment, reserved),
+		stateroutine.OnCall(s.CancelBooking, reserved),
+		stateroutine.OnTimer(15*time.Minute, s.ExpireReservation, reserved),
 	), nil
 }
 
-func (s *BookingService) ProcessPayment(ctx *durable.Context, state ReservedState, msg PaymentInfo) (*durable.Suspend[BookingResult], error) {
+func (s *BookingService) ProcessPayment(ctx *stateroutine.Context, state ReservedState, msg PaymentInfo) (*stateroutine.Suspend[BookingResult], error) {
 	fmt.Printf("charging card ending in %s\n", msg.CardNumber[len(msg.CardNumber)-4:])
 	paid := PaidState{UserID: state.UserID, ItemID: state.ItemID, PaymentID: "PAY-123"}
 
-	durable.SetQueryHandler(ctx, s.GetPaidStatus, paid)
-	return durable.Select[BookingResult](
-		durable.OnCast(s.ProcessShipping, paid),
-		durable.OnTimer(24*time.Hour, s.ExpireShipping, paid),
+	stateroutine.SetQueryResult(ctx, StatusResp{Status: "paid", PaymentID: paid.PaymentID})
+	return stateroutine.Select[BookingResult](
+		stateroutine.OnSend(s.ProcessShipping, paid),
+		stateroutine.OnTimer(24*time.Hour, s.ExpireShipping, paid),
 	), nil
 }
 
-func (s *BookingService) ProcessShipping(ctx *durable.Context, state PaidState, msg ShippingInfo) (*durable.Suspend[BookingResult], error) {
+// PaymentFailed is the terminal error handler for ProcessPayment. If the
+// payment gateway is unreachable after all retries, release the reservation
+// so the item goes back into inventory.
+func (s *BookingService) PaymentFailed(ctx *stateroutine.Context, state ReservedState, msg PaymentInfo, err error) (*stateroutine.Suspend[BookingResult], error) {
+	fmt.Printf("payment failed for item %s after all retries: %v\n", state.ItemID, err)
+	fmt.Printf("releasing reservation for item %s\n", state.ItemID)
+	stateroutine.SetQueryResult(ctx, StatusResp{Status: "payment_failed"})
+	return stateroutine.Done(BookingResult{Status: "payment_failed"}), nil
+}
+
+func (s *BookingService) ProcessShipping(ctx *stateroutine.Context, state PaidState, msg ShippingInfo) (*stateroutine.Suspend[BookingResult], error) {
 	fmt.Printf("shipping to %s, %s %s\n", msg.Address, msg.City, msg.Zip)
-	return durable.Done(BookingResult{Status: "shipped"}), nil
-}
-
-// Query handlers: read-only, state by value, don't advance state machine.
-func (s *BookingService) GetReservedStatus(ctx *durable.Context, _ ReservedState, _ StatusReq) (StatusResp, error) {
-	return StatusResp{Status: "reserved"}, nil
-}
-
-func (s *BookingService) GetPaidStatus(ctx *durable.Context, state PaidState, _ StatusReq) (StatusResp, error) {
-	return StatusResp{Status: "paid", PaymentID: state.PaymentID}, nil
+	return stateroutine.Done(BookingResult{Status: "shipped"}), nil
 }
 
 // Call handler: advances state machine, returns response to caller.
-func (s *BookingService) CancelBooking(ctx *durable.Context, _ ReservedState, _ CancelReq) (CancelResp, *durable.Suspend[BookingResult], error) {
-	return CancelResp{Confirmed: true}, durable.Done(BookingResult{Status: "cancelled"}), nil
+func (s *BookingService) CancelBooking(ctx *stateroutine.Context, _ ReservedState, _ CancelReq) (CancelResp, *stateroutine.Suspend[BookingResult], error) {
+	return CancelResp{Confirmed: true}, stateroutine.Done(BookingResult{Status: "cancelled"}), nil
 }
 
-func (s *BookingService) ExpireReservation(ctx *durable.Context, _ ReservedState) (*durable.Suspend[BookingResult], error) {
+func (s *BookingService) ExpireReservation(ctx *stateroutine.Context, _ ReservedState) (*stateroutine.Suspend[BookingResult], error) {
 	fmt.Println("reservation expired, no payment received")
-	return durable.Done(BookingResult{Status: "expired"}), nil
+	return stateroutine.Done(BookingResult{Status: "expired"}), nil
 }
 
-func (s *BookingService) ExpireShipping(ctx *durable.Context, _ PaidState) (*durable.Suspend[BookingResult], error) {
+func (s *BookingService) ExpireShipping(ctx *stateroutine.Context, _ PaidState) (*stateroutine.Suspend[BookingResult], error) {
 	fmt.Println("shipping info not provided in time, refunding payment")
-	return durable.Done(BookingResult{Status: "refunded"}), nil
+	return stateroutine.Done(BookingResult{Status: "refunded"}), nil
 }
 
 // --- main ---
@@ -142,15 +145,14 @@ func main() {
 
 	svc := &BookingService{}
 
-	w := durable.NewWorker("booking-queue")
-	durable.AddHandler(w, svc.ReserveItem, durable.WithRetryPolicy(durable.RetryPolicy{MaxAttempts: 5}))
-	durable.AddCastHandler(w, svc.ProcessPayment, durable.WithRetryPolicy(durable.RetryPolicy{MaxAttempts: 3}))
-	durable.AddCastHandler(w, svc.ProcessShipping, durable.WithRetryPolicy(durable.RetryPolicy{MaxAttempts: 3}))
-	durable.AddCallHandler(w, svc.CancelBooking)
-	durable.AddQueryHandler(w, svc.GetReservedStatus)
-	durable.AddQueryHandler(w, svc.GetPaidStatus)
-	durable.AddHandler(w, svc.ExpireReservation)
-	durable.AddHandler(w, svc.ExpireShipping)
+	w := stateroutine.NewWorker("booking-queue")
+	stateroutine.AddHandler(w, svc.ReserveItem, stateroutine.ErrorPolicy{MaxAttempts: 5})
+	stateroutine.AddSendHandler(w, svc.ProcessPayment, stateroutine.ErrorPolicy{MaxAttempts: 3},
+		svc.PaymentFailed)
+	stateroutine.AddSendHandler(w, svc.ProcessShipping, stateroutine.ErrorPolicy{MaxAttempts: 3})
+	stateroutine.AddCallHandler(w, svc.CancelBooking, stateroutine.ErrorPolicy{})
+	stateroutine.AddHandler(w, svc.ExpireReservation, stateroutine.ErrorPolicy{})
+	stateroutine.AddHandler(w, svc.ExpireShipping, stateroutine.ErrorPolicy{})
 
 	go func() {
 		if err := w.Start(); err != nil {
@@ -159,24 +161,24 @@ func main() {
 	}()
 	defer w.Stop()
 
-	client := durable.NewClient()
+	client := stateroutine.NewClient()
 
 	// Start the booking routine.
-	h, err := durable.Start(client, ctx, "booking-123", svc.ReserveItem,
+	h, err := stateroutine.Start(client, ctx, "booking-123", svc.ReserveItem,
 		BookingState{UserID: "user-42", ItemID: "SKU-900"})
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Query the current status.
-	status, err := durable.ClientQuery(client, ctx, "booking-123", svc.GetReservedStatus, StatusReq{})
+	status, err := stateroutine.ClientQuery(client, ctx, "booking-123", StatusResp{})
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Printf("status: %s\n", status.Status)
 
 	// Send payment info.
-	if err := durable.ClientCast(client, ctx, "booking-123", PaymentInfo{
+	if err := stateroutine.ClientSend(client, ctx, "booking-123", PaymentInfo{
 		CardNumber: "4111111111111234",
 		Expiry:     "12/27",
 	}); err != nil {
@@ -184,7 +186,7 @@ func main() {
 	}
 
 	// Send shipping info.
-	if err := durable.ClientCast(client, ctx, "booking-123", ShippingInfo{
+	if err := stateroutine.ClientSend(client, ctx, "booking-123", ShippingInfo{
 		Address: "123 Main St",
 		City:    "Springfield",
 		Zip:     "62704",

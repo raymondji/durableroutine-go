@@ -1,5 +1,5 @@
 // Command fanout demonstrates fan-out/fan-in using child routines and
-// routine-to-routine Cast, mirroring goroutines and channels:
+// routine-to-routine Send, mirroring goroutines and channels:
 //
 //	ch := make(chan Result)
 //	for _, item := range items {
@@ -9,7 +9,7 @@
 //
 // Each child runs as its own durable routine (Temporal child workflow) with
 // independent retries, timeouts, and event history. Children send results
-// back to the parent via durable.Cast — like writing to a channel.
+// back to the parent via stateroutine.Send — like writing to a channel.
 // Uses struct-based handlers for dependency injection.
 package main
 
@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/raymondji/durableroutine/durable"
+	"github.com/raymondji/stateroutine/stateroutine"
 )
 
 // --- Child routine ---
@@ -70,7 +70,7 @@ type FanoutService struct {
 	// Injected dependencies would go here.
 }
 
-func (s *FanoutService) SpawnItems(ctx *durable.Context, state FanoutState) (*durable.Suspend[FanoutResult], error) {
+func (s *FanoutService) SpawnItems(ctx *stateroutine.Context, state FanoutState) (*stateroutine.Suspend[FanoutResult], error) {
 	parentID := ctx.RoutineID()
 
 	for _, item := range state.Items {
@@ -79,18 +79,18 @@ func (s *FanoutService) SpawnItems(ctx *durable.Context, state FanoutState) (*du
 	}
 
 	collecting := CollectingState{Pending: len(state.Items)}
-	return durable.Select[FanoutResult](
-		durable.OnCast(s.CollectResult, collecting),
+	return stateroutine.Select[FanoutResult](
+		stateroutine.OnSend(s.CollectResult, collecting),
 	), nil
 }
 
-func (s *FanoutService) CollectResult(ctx *durable.Context, state CollectingState, result ItemResult) (*durable.Suspend[FanoutResult], error) {
+func (s *FanoutService) CollectResult(ctx *stateroutine.Context, state CollectingState, result ItemResult) (*stateroutine.Suspend[FanoutResult], error) {
 	state.Results = append(state.Results, result)
 	state.Pending--
 
 	if state.Pending > 0 {
-		return durable.Select[FanoutResult](
-			durable.OnCast(s.CollectResult, state),
+		return stateroutine.Select[FanoutResult](
+			stateroutine.OnSend(s.CollectResult, state),
 		), nil
 	}
 
@@ -99,7 +99,7 @@ func (s *FanoutService) CollectResult(ctx *durable.Context, state CollectingStat
 	for _, r := range state.Results {
 		fmt.Printf("  %s: %s\n", r.ID, r.Output)
 	}
-	return durable.Done(FanoutResult{Results: state.Results}), nil
+	return stateroutine.Done(FanoutResult{Results: state.Results}), nil
 }
 
 // --- Item processor service ---
@@ -108,17 +108,17 @@ type ItemService struct {
 	// Injected dependencies would go here.
 }
 
-func (s *ItemService) ProcessItem(ctx *durable.Context, state ItemState) (*durable.Suspend[durable.Unit], error) {
+func (s *ItemService) ProcessItem(ctx *stateroutine.Context, state ItemState) (*stateroutine.Suspend[stateroutine.Unit], error) {
 	result := ItemResult{
 		ID:     state.ID,
 		Output: fmt.Sprintf("processed: %s", state.Data),
 	}
 
 	// Send result back to the parent — like ch <- result.
-	if err := durable.Cast(ctx, state.ParentID, result); err != nil {
+	if err := stateroutine.Send(ctx, state.ParentID, result); err != nil {
 		return nil, fmt.Errorf("send result: %w", err)
 	}
-	return durable.Done(durable.Unit{}), nil
+	return stateroutine.Done(stateroutine.Unit{}), nil
 }
 
 // --- main ---
@@ -129,10 +129,10 @@ func main() {
 	fanoutSvc := &FanoutService{}
 	itemSvc := &ItemService{}
 
-	w := durable.NewWorker("fanout-queue")
-	durable.AddHandler(w, fanoutSvc.SpawnItems)
-	durable.AddHandler(w, itemSvc.ProcessItem)
-	durable.AddCastHandler(w, fanoutSvc.CollectResult)
+	w := stateroutine.NewWorker("fanout-queue")
+	stateroutine.AddHandler(w, fanoutSvc.SpawnItems, stateroutine.ErrorPolicy{})
+	stateroutine.AddHandler(w, itemSvc.ProcessItem, stateroutine.ErrorPolicy{})
+	stateroutine.AddSendHandler(w, fanoutSvc.CollectResult, stateroutine.ErrorPolicy{})
 
 	go func() {
 		if err := w.Start(); err != nil {
@@ -141,9 +141,9 @@ func main() {
 	}()
 	defer w.Stop()
 
-	client := durable.NewClient()
+	client := stateroutine.NewClient()
 
-	h, err := durable.Start(client, ctx, "batch-001", fanoutSvc.SpawnItems, FanoutState{
+	h, err := stateroutine.Start(client, ctx, "batch-001", fanoutSvc.SpawnItems, FanoutState{
 		Items: []struct {
 			ID   string
 			Data string

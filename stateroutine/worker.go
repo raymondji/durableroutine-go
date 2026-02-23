@@ -1,4 +1,4 @@
-package durable
+package stateroutine
 
 // Worker registers routine definitions and polls Temporal for work.
 type Worker struct {

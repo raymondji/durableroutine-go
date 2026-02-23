@@ -10,7 +10,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/raymondji/durableroutine/durable"
+	"github.com/raymondji/stateroutine/stateroutine"
 )
 
 // --- Per-step state types ---
@@ -41,19 +41,19 @@ type ReminderService struct {
 	// Injected dependencies would go here (e.g., email client).
 }
 
-func (s *ReminderService) SendInitial(ctx *durable.Context, state InitialState) (*durable.Suspend[durable.Unit], error) {
+func (s *ReminderService) SendInitial(ctx *stateroutine.Context, state InitialState) (*stateroutine.Suspend[stateroutine.Unit], error) {
 	fmt.Printf("sending initial email to %s\n", state.Email)
-	return durable.After(24*time.Hour, s.SendFollowUp, FollowUpState{Email: state.Email}), nil
+	return stateroutine.After(24*time.Hour, s.SendFollowUp, FollowUpState{Email: state.Email}), nil
 }
 
-func (s *ReminderService) SendFollowUp(ctx *durable.Context, state FollowUpState) (*durable.Suspend[durable.Unit], error) {
+func (s *ReminderService) SendFollowUp(ctx *stateroutine.Context, state FollowUpState) (*stateroutine.Suspend[stateroutine.Unit], error) {
 	fmt.Printf("sending follow-up email to %s\n", state.Email)
-	return durable.After(7*24*time.Hour, s.SendFinal, FinalState{Email: state.Email}), nil
+	return stateroutine.After(7*24*time.Hour, s.SendFinal, FinalState{Email: state.Email}), nil
 }
 
-func (s *ReminderService) SendFinal(ctx *durable.Context, state FinalState) (*durable.Suspend[durable.Unit], error) {
+func (s *ReminderService) SendFinal(ctx *stateroutine.Context, state FinalState) (*stateroutine.Suspend[stateroutine.Unit], error) {
 	fmt.Printf("sending final email to %s\n", state.Email)
-	return durable.Done(durable.Unit{}), nil
+	return stateroutine.Done(stateroutine.Unit{}), nil
 }
 
 // --- main ---
@@ -63,10 +63,10 @@ func main() {
 
 	svc := &ReminderService{}
 
-	w := durable.NewWorker("reminder-queue")
-	durable.AddHandler(w, svc.SendInitial)
-	durable.AddHandler(w, svc.SendFollowUp)
-	durable.AddHandler(w, svc.SendFinal)
+	w := stateroutine.NewWorker("reminder-queue")
+	stateroutine.AddHandler(w, svc.SendInitial, stateroutine.ErrorPolicy{})
+	stateroutine.AddHandler(w, svc.SendFollowUp, stateroutine.ErrorPolicy{})
+	stateroutine.AddHandler(w, svc.SendFinal, stateroutine.ErrorPolicy{})
 
 	go func() {
 		if err := w.Start(); err != nil {
@@ -75,8 +75,8 @@ func main() {
 	}()
 	defer w.Stop()
 
-	client := durable.NewClient()
-	if _, err := durable.Start(client, ctx, "reminder-user-42",
+	client := stateroutine.NewClient()
+	if _, err := stateroutine.Start(client, ctx, "reminder-user-42",
 		svc.SendInitial, InitialState{Email: "user@example.com"}); err != nil {
 		log.Fatal(err)
 	}

@@ -1,3 +1,3 @@
-module github.com/raymondji/durableroutine
+module github.com/raymondji/stateroutine
 
 go 1.23

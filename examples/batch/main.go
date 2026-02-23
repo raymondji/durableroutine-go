@@ -24,7 +24,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/raymondji/durableroutine/durable"
+	"github.com/raymondji/stateroutine/stateroutine"
 )
 
 const chunkSize = 100
@@ -70,7 +70,7 @@ type BatchService struct {
 	// Injected dependencies would go here (e.g., DB client, API client).
 }
 
-func (s *BatchService) StartBatch(ctx *durable.Context, state BatchState) (*durable.Suspend[BatchResult], error) {
+func (s *BatchService) StartBatch(ctx *stateroutine.Context, state BatchState) (*stateroutine.Suspend[BatchResult], error) {
 	fmt.Printf("starting batch of %d items\n", len(state.Items))
 	processing := ProcessingState{Items: state.Items}
 
@@ -78,11 +78,11 @@ func (s *BatchService) StartBatch(ctx *durable.Context, state BatchState) (*dura
 	return s.processChunk(ctx, processing)
 }
 
-func (s *BatchService) ProcessChunk(ctx *durable.Context, state ProcessingState) (*durable.Suspend[BatchResult], error) {
+func (s *BatchService) ProcessChunk(ctx *stateroutine.Context, state ProcessingState) (*stateroutine.Suspend[BatchResult], error) {
 	return s.processChunk(ctx, state)
 }
 
-func (s *BatchService) processChunk(_ *durable.Context, state ProcessingState) (*durable.Suspend[BatchResult], error) {
+func (s *BatchService) processChunk(_ *stateroutine.Context, state ProcessingState) (*stateroutine.Suspend[BatchResult], error) {
 	end := state.Offset + chunkSize
 	if end > len(state.Items) {
 		end = len(state.Items)
@@ -106,24 +106,24 @@ func (s *BatchService) processChunk(_ *durable.Context, state ProcessingState) (
 		// All items processed.
 		fmt.Printf("batch complete: %d processed, %d errors\n",
 			state.Processed, state.Errors)
-		return durable.Done(BatchResult{Processed: state.Processed, Errors: state.Errors}), nil
+		return stateroutine.Done(BatchResult{Processed: state.Processed, Errors: state.Errors}), nil
 	}
 
-	// More items to process. Use Select with OnCast + Default so the workflow
+	// More items to process. Use Select with OnSend + Default so the workflow
 	// loop checks for a cancel signal before processing the next chunk.
 	//
 	// - If no cancel signal is pending: Default fires immediately → next chunk.
-	// - If a cancel signal arrived:     OnCast fires → CancelBatch runs.
-	return durable.Select[BatchResult](
-		durable.OnCast(s.CancelBatch, state),
-		durable.Default(s.ProcessChunk, state),
+	// - If a cancel signal arrived:     OnSend fires → CancelBatch runs.
+	return stateroutine.Select[BatchResult](
+		stateroutine.OnSend(s.CancelBatch, state),
+		stateroutine.Default(s.ProcessChunk, state),
 	), nil
 }
 
-func (s *BatchService) CancelBatch(ctx *durable.Context, state ProcessingState, msg CancelMsg) (*durable.Suspend[BatchResult], error) {
+func (s *BatchService) CancelBatch(ctx *stateroutine.Context, state ProcessingState, msg CancelMsg) (*stateroutine.Suspend[BatchResult], error) {
 	fmt.Printf("batch cancelled (reason: %s) after %d/%d items (%d errors)\n",
 		msg.Reason, state.Offset, len(state.Items), state.Errors)
-	return durable.Done(BatchResult{Processed: state.Processed, Errors: state.Errors, Cancelled: true}), nil
+	return stateroutine.Done(BatchResult{Processed: state.Processed, Errors: state.Errors, Cancelled: true}), nil
 }
 
 // processItem simulates processing a single item.
@@ -139,10 +139,10 @@ func main() {
 
 	svc := &BatchService{}
 
-	w := durable.NewWorker("batch-queue")
-	durable.AddHandler(w, svc.StartBatch)
-	durable.AddHandler(w, svc.ProcessChunk)
-	durable.AddCastHandler(w, svc.CancelBatch)
+	w := stateroutine.NewWorker("batch-queue")
+	stateroutine.AddHandler(w, svc.StartBatch, stateroutine.ErrorPolicy{})
+	stateroutine.AddHandler(w, svc.ProcessChunk, stateroutine.ErrorPolicy{})
+	stateroutine.AddSendHandler(w, svc.CancelBatch, stateroutine.ErrorPolicy{})
 
 	go func() {
 		if err := w.Start(); err != nil {
@@ -151,7 +151,7 @@ func main() {
 	}()
 	defer w.Stop()
 
-	client := durable.NewClient()
+	client := stateroutine.NewClient()
 
 	// Generate a batch of items.
 	items := make([]string, 350)
@@ -159,7 +159,7 @@ func main() {
 		items[i] = fmt.Sprintf("item-%d", i)
 	}
 
-	h, err := durable.Start(client, ctx, "batch-001", svc.StartBatch, BatchState{Items: items})
+	h, err := stateroutine.Start(client, ctx, "batch-001", svc.StartBatch, BatchState{Items: items})
 	if err != nil {
 		log.Fatal(err)
 	}
