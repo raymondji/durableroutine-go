@@ -1,5 +1,7 @@
 # TODO
 
+These are ready for Claude to work on.
+
 ## How do we make it more clear that spawning/casting to other stateroutines within a stateroutine handler does not happen immediately?
 
 Some possible ideas:
@@ -33,6 +35,14 @@ Make sure the implementation code is sectioned off from the core API, e.g. in a 
 ## Convert each of the examples to be both 1. runnable code samples and 2. executable tests
 
 We should exercise the tests against all implementations.
+
+# Draft TODOs
+
+These are not ready for Claude to work on yet.
+
+## Rename Spawn to Start or something similar for consistency
+
+Let's aim for maximum consistency on naming with the APIs.
 
 # DONE
 
