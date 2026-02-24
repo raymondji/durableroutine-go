@@ -13,23 +13,23 @@ import (
 
 // --- Per-step state types ---
 
-type InitialState struct {
+type InitialInput struct {
 	Email string
 }
 
-func (InitialState) DurableKind() string { return "reminder.initial" }
+func (InitialInput) DurableKind() string { return "reminder.initial" }
 
-type FollowUpState struct {
+type FollowUpInput struct {
 	Email string
 }
 
-func (FollowUpState) DurableKind() string { return "reminder.follow-up" }
+func (FollowUpInput) DurableKind() string { return "reminder.follow-up" }
 
-type FinalState struct {
+type FinalInput struct {
 	Email string
 }
 
-func (FinalState) DurableKind() string { return "reminder.final" }
+func (FinalInput) DurableKind() string { return "reminder.final" }
 
 // --- Service struct ---
 
@@ -39,26 +39,26 @@ type ReminderService struct {
 	FollowUpDelay time.Duration // if zero, defaults to 7 days
 }
 
-func (s *ReminderService) SendInitial(ctx *durable.Context, state InitialState) (*durable.Continuation[durable.Unit], error) {
-	fmt.Printf("sending initial email to %s\n", state.Email)
+func (s *ReminderService) SendInitial(ctx *durable.Context, input InitialInput) (*durable.Continuation[durable.Unit], error) {
+	fmt.Printf("sending initial email to %s\n", input.Email)
 	delay := 24 * time.Hour
 	if s.InitialDelay > 0 {
 		delay = s.InitialDelay
 	}
-	return durable.After(delay, s.SendFollowUp, FollowUpState{Email: state.Email}), nil
+	return durable.After(delay, s.SendFollowUp, FollowUpInput{Email: input.Email}), nil
 }
 
-func (s *ReminderService) SendFollowUp(ctx *durable.Context, state FollowUpState) (*durable.Continuation[durable.Unit], error) {
-	fmt.Printf("sending follow-up email to %s\n", state.Email)
+func (s *ReminderService) SendFollowUp(ctx *durable.Context, input FollowUpInput) (*durable.Continuation[durable.Unit], error) {
+	fmt.Printf("sending follow-up email to %s\n", input.Email)
 	delay := 7 * 24 * time.Hour
 	if s.FollowUpDelay > 0 {
 		delay = s.FollowUpDelay
 	}
-	return durable.After(delay, s.SendFinal, FinalState{Email: state.Email}), nil
+	return durable.After(delay, s.SendFinal, FinalInput{Email: input.Email}), nil
 }
 
-func (s *ReminderService) SendFinal(ctx *durable.Context, state FinalState) (*durable.Continuation[durable.Unit], error) {
-	fmt.Printf("sending final email to %s\n", state.Email)
+func (s *ReminderService) SendFinal(ctx *durable.Context, input FinalInput) (*durable.Continuation[durable.Unit], error) {
+	fmt.Printf("sending final email to %s\n", input.Email)
 	return durable.Done(durable.Unit{}), nil
 }
 

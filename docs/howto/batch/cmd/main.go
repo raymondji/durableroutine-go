@@ -25,7 +25,7 @@ func main() {
 			items[i] = fmt.Sprintf("item-%d", i)
 		}
 
-		h, err := durable.Go(client, ctx, "batch-001", svc.StartBatch, batch.BatchState{Items: items})
+		h, err := durable.Go(client, ctx, "batch-001", svc.StartBatch, batch.BatchInput{Items: items})
 		if err != nil {
 			log.Fatal(err)
 		}

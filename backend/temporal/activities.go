@@ -30,7 +30,7 @@ func (a *handlerActivity) RunHandler(ctx context.Context, input ActivityInput) (
 
 	sctx := durable.NewContext(ctx, input.RoutineID)
 
-	runOut, err := entry.runner(sctx, input.State, input.Message, input.Error)
+	runOut, err := entry.runner(sctx, input.Input, input.Message, input.Error)
 	if err != nil {
 		return ActivityOutput{}, err
 	}
@@ -42,7 +42,7 @@ func (a *handlerActivity) RunHandler(ctx context.Context, input ActivityInput) (
 	} else {
 		cont := &SerializedContinuation{Cases: make([]SerializedCase, len(runOut.Cases))}
 		for i, c := range runOut.Cases {
-			stateBytes, err := json.Marshal(c.State())
+			stateBytes, err := json.Marshal(c.Input())
 			if err != nil {
 				return ActivityOutput{}, fmt.Errorf("marshal case state: %w", err)
 			}
@@ -51,7 +51,7 @@ func (a *handlerActivity) RunHandler(ctx context.Context, input ActivityInput) (
 				SendName:      c.SendName(),
 				CallName:      c.CallName(),
 				Immediate:     c.Immediate(),
-				State:         stateBytes,
+				Input:         stateBytes,
 				HandlerKey:    c.HandlerKey(),
 			}
 		}
@@ -71,15 +71,15 @@ func (a *handlerActivity) RunHandler(ctx context.Context, input ActivityInput) (
 		})
 	}
 	for _, sr := range sctx.StartRequests() {
-		stateBytes, err := json.Marshal(sr.State)
+		stateBytes, err := json.Marshal(sr.Input)
 		if err != nil {
-			return ActivityOutput{}, fmt.Errorf("marshal start state: %w", err)
+			return ActivityOutput{}, fmt.Errorf("marshal start input: %w", err)
 		}
 		output.StartRequests = append(output.StartRequests, StartEntry{
 			RoutineID:  sr.RoutineID,
-			StateKind:  sr.StateKind,
+			InputKind:  sr.InputKind,
 			ResultKind: sr.ResultKind,
-			State:      stateBytes,
+			Input:      stateBytes,
 		})
 	}
 	for _, sr := range sctx.SendRequests() {
@@ -88,11 +88,11 @@ func (a *handlerActivity) RunHandler(ctx context.Context, input ActivityInput) (
 			return ActivityOutput{}, fmt.Errorf("marshal send msg: %w", err)
 		}
 		output.SendRequests = append(output.SendRequests, SendEntry{
-			RoutineID:  sr.RoutineID,
-			StateKind:  sr.StateKind,
-			MsgKind:    sr.MsgKind,
-			ResultKind: sr.ResultKind,
-			Msg:        msgBytes,
+			RoutineID:        sr.RoutineID,
+			InputKind:        sr.InputKind,
+			ExternalInputKind: sr.ExternalInputKind,
+			ResultKind:       sr.ResultKind,
+			Msg:              msgBytes,
 		})
 	}
 

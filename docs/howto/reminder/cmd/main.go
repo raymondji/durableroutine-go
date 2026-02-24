@@ -24,7 +24,7 @@ func main() {
 		ctx := context.Background()
 
 		h, err := durable.Go(client, ctx, "reminder-user-42",
-			svc.SendInitial, reminder.InitialState{Email: "user@example.com"})
+			svc.SendInitial, reminder.InitialInput{Email: "user@example.com"})
 		if err != nil {
 			log.Fatal(err)
 		}

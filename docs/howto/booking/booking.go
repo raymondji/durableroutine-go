@@ -1,7 +1,7 @@
 // Package booking demonstrates a multi-step durable routine where the client drives
 // each step by sending typed messages. Shows Send + Call + Query together
 // with struct-based dependency injection.
-// Per-step state: BookingState -> ReservedState -> PaidState.
+// Per-step state: BookingInput -> ReservedInput -> PaidInput.
 //
 // Also demonstrates ReceiveSendTerminalError: if payment processing fails after
 // all retries, the terminal error handler releases the reservation instead
@@ -17,12 +17,12 @@ import (
 
 // --- State ---
 
-type BookingState struct {
+type BookingInput struct {
 	UserID string
 	ItemID string
 }
 
-func (BookingState) DurableKind() string { return "booking" }
+func (BookingInput) DurableKind() string { return "booking" }
 
 // --- Messages ---
 
@@ -66,20 +66,20 @@ func (BookingResult) DurableKind() string { return "booking-result" }
 
 // --- Per-step state types ---
 
-type ReservedState struct {
+type ReservedInput struct {
 	UserID string
 	ItemID string
 }
 
-func (ReservedState) DurableKind() string { return "booking.reserved" }
+func (ReservedInput) DurableKind() string { return "booking.reserved" }
 
-type PaidState struct {
+type PaidInput struct {
 	UserID    string
 	ItemID    string
 	PaymentID string
 }
 
-func (PaidState) DurableKind() string { return "booking.paid" }
+func (PaidInput) DurableKind() string { return "booking.paid" }
 
 // --- Service struct ---
 
@@ -90,9 +90,9 @@ type BookingService struct {
 	ChargeCardFn       func(string) error // if non-nil, called during payment processing
 }
 
-func (s *BookingService) ReserveItem(ctx *durable.Context, state BookingState) (*durable.Continuation[BookingResult], error) {
-	fmt.Printf("reserving item %s for user %s\n", state.ItemID, state.UserID)
-	reserved := ReservedState{UserID: state.UserID, ItemID: state.ItemID}
+func (s *BookingService) ReserveItem(ctx *durable.Context, input BookingInput) (*durable.Continuation[BookingResult], error) {
+	fmt.Printf("reserving item %s for user %s\n", input.ItemID, input.UserID)
+	reserved := ReservedInput{UserID: input.UserID, ItemID: input.ItemID}
 
 	reservationTimeout := 15 * time.Minute
 	if s.ReservationTimeout > 0 {
@@ -106,14 +106,14 @@ func (s *BookingService) ReserveItem(ctx *durable.Context, state BookingState) (
 	), nil
 }
 
-func (s *BookingService) ProcessPayment(ctx *durable.Context, state ReservedState, msg PaymentInfo) (*durable.Continuation[BookingResult], error) {
+func (s *BookingService) ProcessPayment(ctx *durable.Context, input ReservedInput, externalInput PaymentInfo) (*durable.Continuation[BookingResult], error) {
 	if s.ChargeCardFn != nil {
-		if err := s.ChargeCardFn(msg.CardNumber); err != nil {
+		if err := s.ChargeCardFn(externalInput.CardNumber); err != nil {
 			return nil, fmt.Errorf("charge card: %w", err)
 		}
 	}
-	fmt.Printf("charging card ending in %s\n", msg.CardNumber[len(msg.CardNumber)-4:])
-	paid := PaidState{UserID: state.UserID, ItemID: state.ItemID, PaymentID: "PAY-123"}
+	fmt.Printf("charging card ending in %s\n", externalInput.CardNumber[len(externalInput.CardNumber)-4:])
+	paid := PaidInput{UserID: input.UserID, ItemID: input.ItemID, PaymentID: "PAY-123"}
 
 	shippingTimeout := 24 * time.Hour
 	if s.ShippingTimeout > 0 {
@@ -129,29 +129,29 @@ func (s *BookingService) ProcessPayment(ctx *durable.Context, state ReservedStat
 // PaymentFailed is the terminal error handler for ProcessPayment. If the
 // payment gateway is unreachable after all retries, release the reservation
 // so the item goes back into inventory.
-func (s *BookingService) PaymentFailed(ctx *durable.Context, state ReservedState, msg PaymentInfo, err error) (*durable.Continuation[BookingResult], error) {
-	fmt.Printf("payment failed for item %s after all retries: %v\n", state.ItemID, err)
-	fmt.Printf("releasing reservation for item %s\n", state.ItemID)
+func (s *BookingService) PaymentFailed(ctx *durable.Context, input ReservedInput, externalInput PaymentInfo, err error) (*durable.Continuation[BookingResult], error) {
+	fmt.Printf("payment failed for item %s after all retries: %v\n", input.ItemID, err)
+	fmt.Printf("releasing reservation for item %s\n", input.ItemID)
 	durable.SetQueryResult(ctx, StatusResp{Status: "payment_failed"})
 	return durable.Done(BookingResult{Status: "payment_failed"}), nil
 }
 
-func (s *BookingService) ProcessShipping(ctx *durable.Context, state PaidState, msg ShippingInfo) (*durable.Continuation[BookingResult], error) {
-	fmt.Printf("shipping to %s, %s %s\n", msg.Address, msg.City, msg.Zip)
+func (s *BookingService) ProcessShipping(ctx *durable.Context, input PaidInput, externalInput ShippingInfo) (*durable.Continuation[BookingResult], error) {
+	fmt.Printf("shipping to %s, %s %s\n", externalInput.Address, externalInput.City, externalInput.Zip)
 	return durable.Done(BookingResult{Status: "shipped"}), nil
 }
 
 // Call handler: advances state machine, returns response to caller.
-func (s *BookingService) CancelBooking(ctx *durable.Context, _ ReservedState, _ CancelReq) (CancelResp, *durable.Continuation[BookingResult], error) {
+func (s *BookingService) CancelBooking(ctx *durable.Context, _ ReservedInput, _ CancelReq) (CancelResp, *durable.Continuation[BookingResult], error) {
 	return CancelResp{Confirmed: true}, durable.Done(BookingResult{Status: "cancelled"}), nil
 }
 
-func (s *BookingService) ExpireReservation(ctx *durable.Context, _ ReservedState) (*durable.Continuation[BookingResult], error) {
+func (s *BookingService) ExpireReservation(ctx *durable.Context, _ ReservedInput) (*durable.Continuation[BookingResult], error) {
 	fmt.Println("reservation expired, no payment received")
 	return durable.Done(BookingResult{Status: "expired"}), nil
 }
 
-func (s *BookingService) ExpireShipping(ctx *durable.Context, _ PaidState) (*durable.Continuation[BookingResult], error) {
+func (s *BookingService) ExpireShipping(ctx *durable.Context, _ PaidInput) (*durable.Continuation[BookingResult], error) {
 	fmt.Println("shipping info not provided in time, refunding payment")
 	return durable.Done(BookingResult{Status: "refunded"}), nil
 }

@@ -13,8 +13,8 @@
 A booking flow: reserve an item, wait for payment or cancellation, then ship.
 
 ```go
-func (s *BookingService) ReserveItem(ctx *durable.Context, state BookingState) (*durable.Continuation[BookingResult], error) {
-    reserved := ReservedState{UserID: state.UserID, ItemID: state.ItemID}
+func (s *BookingService) ReserveItem(ctx *durable.Context, input BookingInput) (*durable.Continuation[BookingResult], error) {
+    reserved := ReservedInput{UserID: input.UserID, ItemID: input.ItemID}
     durable.SetQueryResult(ctx, StatusResp{Status: "reserved"})
 
     return durable.Select(
@@ -24,9 +24,9 @@ func (s *BookingService) ReserveItem(ctx *durable.Context, state BookingState) (
     ), nil
 }
 
-func (s *BookingService) ProcessPayment(ctx *durable.Context, state ReservedState, msg PaymentInfo) (*durable.Continuation[BookingResult], error) {
-    chargeCard(msg.CardNumber)
-    paid := PaidState{UserID: state.UserID, ItemID: state.ItemID, PaymentID: "PAY-123"}
+func (s *BookingService) ProcessPayment(ctx *durable.Context, input ReservedInput, externalInput PaymentInfo) (*durable.Continuation[BookingResult], error) {
+    chargeCard(externalInput.CardNumber)
+    paid := PaidInput{UserID: input.UserID, ItemID: input.ItemID, PaymentID: "PAY-123"}
     durable.SetQueryResult(ctx, StatusResp{Status: "paid", PaymentID: paid.PaymentID})
 
     return durable.Select(
@@ -36,9 +36,9 @@ func (s *BookingService) ProcessPayment(ctx *durable.Context, state ReservedStat
 }
 
 // If payment fails after all retries, run compensations.
-func (s *BookingService) PaymentFailed(ctx *durable.Context, state ReservedState, msg PaymentInfo, err error) (*durable.Continuation[BookingResult], error) {
-    refundPaymentIfPaid(state.ItemID)
-    releaseReservation(state.ItemID)
+func (s *BookingService) PaymentFailed(ctx *durable.Context, input ReservedInput, externalInput PaymentInfo, err error) (*durable.Continuation[BookingResult], error) {
+    refundPaymentIfPaid(input.ItemID)
+    releaseReservation(input.ItemID)
 
     return durable.Done(BookingResult{Status: "payment_failed"}), nil
 }
@@ -67,7 +67,7 @@ func main() {
     // Start a booking routine.
     client := durable.NewClient(/* ... */)
     h, _ := durable.Go(client, ctx, "booking-123", svc.ReserveItem,
-        BookingState{UserID: "user-42", ItemID: "SKU-900"})
+        BookingInput{UserID: "user-42", ItemID: "SKU-900"})
 
     // Query current status (read-only, instant).
     status, _ := durable.Query(client, ctx, "booking-123", StatusResp{})

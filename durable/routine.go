@@ -21,16 +21,16 @@ type Payload interface {
 
 // --- Handler function signatures ---
 
-// Handler is a function that receives state and returns a Continuation
+// Handler is a function that receives input and returns a Continuation
 // describing what the routine should wait for next.
 // Return Done(result) to complete the routine.
-type Handler[State Payload, Result Payload] func(ctx *Context, state State) (*Continuation[Result], error)
+type Handler[Input Payload, Result Payload] func(ctx *Context, input Input) (*Continuation[Result], error)
 
 // SendHandler handles a fire-and-forget message (Signal).
-type SendHandler[State Payload, M Payload, Result Payload] func(ctx *Context, state State, msg M) (*Continuation[Result], error)
+type SendHandler[Input Payload, ExternalInput Payload, Result Payload] func(ctx *Context, input Input, externalInput ExternalInput) (*Continuation[Result], error)
 
 // CallHandler handles a synchronous request-response (Update).
-type CallHandler[State Payload, Req Payload, Resp Payload, Result Payload] func(ctx *Context, state State, req Req) (Resp, *Continuation[Result], error)
+type CallHandler[Input Payload, ExternalReq Payload, ExternalResp Payload, Result Payload] func(ctx *Context, input Input, externalReq ExternalReq) (ExternalResp, *Continuation[Result], error)
 
 // --- Terminal error handler function signatures ---
 //
@@ -40,20 +40,20 @@ type CallHandler[State Payload, Req Payload, Resp Payload, Result Payload] func(
 // state, or fail the routine.
 
 // TerminalErrorHandler handles terminal errors for a Handler.
-type TerminalErrorHandler[State Payload, Result Payload] func(ctx *Context, state State, err error) (*Continuation[Result], error)
+type TerminalErrorHandler[Input Payload, Result Payload] func(ctx *Context, input Input, err error) (*Continuation[Result], error)
 
 // SendTerminalErrorHandler handles terminal errors for a SendHandler.
-type SendTerminalErrorHandler[State Payload, M Payload, Result Payload] func(ctx *Context, state State, msg M, err error) (*Continuation[Result], error)
+type SendTerminalErrorHandler[Input Payload, ExternalInput Payload, Result Payload] func(ctx *Context, input Input, externalInput ExternalInput, err error) (*Continuation[Result], error)
 
 // CallTerminalErrorHandler handles terminal errors for a CallHandler.
-type CallTerminalErrorHandler[State Payload, Req Payload, Resp Payload, Result Payload] func(ctx *Context, state State, req Req, err error) (Resp, *Continuation[Result], error)
+type CallTerminalErrorHandler[Input Payload, ExternalReq Payload, ExternalResp Payload, Result Payload] func(ctx *Context, input Input, externalReq ExternalReq, err error) (ExternalResp, *Continuation[Result], error)
 
 // --- Runner types ---
 
 // HandlerRunner is a closure that deserializes inputs, invokes the handler,
 // and extracts the Continuation — all without reflection. Created at registration
 // time when full generic type information is available.
-type HandlerRunner func(ctx *Context, rawState json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error)
+type HandlerRunner func(ctx *Context, rawInput json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error)
 
 // RunOutput is the type-erased result of a HandlerRunner invocation.
 type RunOutput struct {
@@ -109,22 +109,22 @@ func registerTerminalError(w *Worker, primaryKey string, teHandler any, runner H
 // --- Registration types with WithTerminalErrorHandler builder methods ---
 
 // handlerReg is returned by RegisterHandler to allow chaining .WithTerminalErrorHandler().
-type handlerReg[S Payload, T Payload] struct {
+type handlerReg[I Payload, T Payload] struct {
 	w   *Worker
 	key string
 }
 
 // WithTerminalErrorHandler registers a terminal error handler that is invoked only
 // after all retries in the RetryPolicy are exhausted, instead of failing
-// the routine. The terminal error handler must have the same State and
+// the routine. The terminal error handler must have the same Input and
 // Result types as the main handler.
-func (r handlerReg[S, T]) WithTerminalErrorHandler(te TerminalErrorHandler[S, T], opts HandlerOptions) {
-	runner := func(ctx *Context, rawState json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
-		var state S
-		if err := json.Unmarshal(rawState, &state); err != nil {
-			return nil, fmt.Errorf("deserialize state: %w", err)
+func (r handlerReg[I, T]) WithTerminalErrorHandler(te TerminalErrorHandler[I, T], opts HandlerOptions) {
+	runner := func(ctx *Context, rawInput json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
+		var input I
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, fmt.Errorf("deserialize input: %w", err)
 		}
-		cont, herr := te(ctx, state, fmt.Errorf("%s", errStr))
+		cont, herr := te(ctx, input, fmt.Errorf("%s", errStr))
 		if herr != nil {
 			return nil, herr
 		}
@@ -134,26 +134,26 @@ func (r handlerReg[S, T]) WithTerminalErrorHandler(te TerminalErrorHandler[S, T]
 }
 
 // sendHandlerReg is returned by RegisterSendHandler to allow chaining .WithTerminalErrorHandler().
-type sendHandlerReg[S Payload, M Payload, T Payload] struct {
+type sendHandlerReg[I Payload, E Payload, T Payload] struct {
 	w   *Worker
 	key string
 }
 
 // WithTerminalErrorHandler registers a terminal error handler that is invoked only
 // after all retries in the RetryPolicy are exhausted, instead of failing
-// the routine. The terminal error handler must have the same State, Message,
+// the routine. The terminal error handler must have the same Input, ExternalInput,
 // and Result types as the main handler.
-func (r sendHandlerReg[S, M, T]) WithTerminalErrorHandler(te SendTerminalErrorHandler[S, M, T], opts HandlerOptions) {
-	runner := func(ctx *Context, rawState json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
-		var state S
-		if err := json.Unmarshal(rawState, &state); err != nil {
-			return nil, fmt.Errorf("deserialize state: %w", err)
+func (r sendHandlerReg[I, E, T]) WithTerminalErrorHandler(te SendTerminalErrorHandler[I, E, T], opts HandlerOptions) {
+	runner := func(ctx *Context, rawInput json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
+		var input I
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, fmt.Errorf("deserialize input: %w", err)
 		}
-		var msg M
-		if err := json.Unmarshal(rawMsg, &msg); err != nil {
-			return nil, fmt.Errorf("deserialize msg: %w", err)
+		var externalInput E
+		if err := json.Unmarshal(rawMsg, &externalInput); err != nil {
+			return nil, fmt.Errorf("deserialize externalInput: %w", err)
 		}
-		cont, herr := te(ctx, state, msg, fmt.Errorf("%s", errStr))
+		cont, herr := te(ctx, input, externalInput, fmt.Errorf("%s", errStr))
 		if herr != nil {
 			return nil, herr
 		}
@@ -163,26 +163,26 @@ func (r sendHandlerReg[S, M, T]) WithTerminalErrorHandler(te SendTerminalErrorHa
 }
 
 // callHandlerReg is returned by RegisterCallHandler to allow chaining .WithTerminalErrorHandler().
-type callHandlerReg[S Payload, Req Payload, Resp Payload, T Payload] struct {
+type callHandlerReg[I Payload, EReq Payload, EResp Payload, T Payload] struct {
 	w   *Worker
 	key string
 }
 
 // WithTerminalErrorHandler registers a terminal error handler that is invoked only
 // after all retries in the RetryPolicy are exhausted, instead of failing
-// the routine. The terminal error handler must have the same State, Request,
-// Response, and Result types as the main handler.
-func (r callHandlerReg[S, Req, Resp, T]) WithTerminalErrorHandler(te CallTerminalErrorHandler[S, Req, Resp, T], opts HandlerOptions) {
-	runner := func(ctx *Context, rawState json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
-		var state S
-		if err := json.Unmarshal(rawState, &state); err != nil {
-			return nil, fmt.Errorf("deserialize state: %w", err)
+// the routine. The terminal error handler must have the same Input, ExternalReq,
+// ExternalResp, and Result types as the main handler.
+func (r callHandlerReg[I, EReq, EResp, T]) WithTerminalErrorHandler(te CallTerminalErrorHandler[I, EReq, EResp, T], opts HandlerOptions) {
+	runner := func(ctx *Context, rawInput json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
+		var input I
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, fmt.Errorf("deserialize input: %w", err)
 		}
-		var req Req
-		if err := json.Unmarshal(rawMsg, &req); err != nil {
-			return nil, fmt.Errorf("deserialize req: %w", err)
+		var externalReq EReq
+		if err := json.Unmarshal(rawMsg, &externalReq); err != nil {
+			return nil, fmt.Errorf("deserialize externalReq: %w", err)
 		}
-		resp, cont, herr := te(ctx, state, req, fmt.Errorf("%s", errStr))
+		resp, cont, herr := te(ctx, input, externalReq, fmt.Errorf("%s", errStr))
 		if herr != nil {
 			return nil, herr
 		}
@@ -202,83 +202,83 @@ func (r callHandlerReg[S, Req, Resp, T]) WithTerminalErrorHandler(te CallTermina
 
 // --- Register* registration functions ---
 
-// RegisterHandler registers a Handler keyed by state DurableKind and result DurableKind.
+// RegisterHandler registers a Handler keyed by input DurableKind and result DurableKind.
 // Any Handler can serve as a routine entry point (via Go) or as a
 // continuation target (via After, Continue, Default).
 // HandlerOptions configures retry behavior for the handler.
 // Chain .WithTerminalErrorHandler() on the returned registration to register a terminal
 // error handler — it is invoked only after all retries are exhausted, instead
 // of failing the routine.
-func RegisterHandler[S Payload, T Payload](w *Worker, h Handler[S, T], opts HandlerOptions) handlerReg[S, T] {
-	var zeroS S
+func RegisterHandler[I Payload, T Payload](w *Worker, h Handler[I, T], opts HandlerOptions) handlerReg[I, T] {
+	var zeroI I
 	var zeroT T
-	key := durablecore.HandlerKey(zeroS.DurableKind(), zeroT.DurableKind())
-	runner := func(ctx *Context, rawState json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
-		var state S
-		if err := json.Unmarshal(rawState, &state); err != nil {
-			return nil, fmt.Errorf("deserialize state: %w", err)
+	key := durablecore.HandlerKey(zeroI.DurableKind(), zeroT.DurableKind())
+	runner := func(ctx *Context, rawInput json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
+		var input I
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, fmt.Errorf("deserialize input: %w", err)
 		}
-		cont, herr := h(ctx, state)
+		cont, herr := h(ctx, input)
 		if herr != nil {
 			return nil, herr
 		}
 		return buildRunOutput(cont, key)
 	}
 	addEntry(w, key, h, runner, opts)
-	return handlerReg[S, T]{w: w, key: key}
+	return handlerReg[I, T]{w: w, key: key}
 }
 
-// RegisterSendHandler registers a SendHandler keyed by state DurableKind, message DurableKind, and result DurableKind.
+// RegisterSendHandler registers a SendHandler keyed by input DurableKind, message DurableKind, and result DurableKind.
 // HandlerOptions configures retry behavior for the handler.
 // Chain .WithTerminalErrorHandler() on the returned registration to register a terminal
 // error handler — it is invoked only after all retries are exhausted, instead
 // of failing the routine.
-func RegisterSendHandler[S Payload, M Payload, T Payload](w *Worker, h SendHandler[S, M, T], opts HandlerOptions) sendHandlerReg[S, M, T] {
-	var zeroS S
-	var zeroM M
+func RegisterSendHandler[I Payload, E Payload, T Payload](w *Worker, h SendHandler[I, E, T], opts HandlerOptions) sendHandlerReg[I, E, T] {
+	var zeroI I
+	var zeroE E
 	var zeroT T
-	key := durablecore.SendKey(zeroS.DurableKind(), zeroM.DurableKind(), zeroT.DurableKind())
-	runner := func(ctx *Context, rawState json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
-		var state S
-		if err := json.Unmarshal(rawState, &state); err != nil {
-			return nil, fmt.Errorf("deserialize state: %w", err)
+	key := durablecore.SendKey(zeroI.DurableKind(), zeroE.DurableKind(), zeroT.DurableKind())
+	runner := func(ctx *Context, rawInput json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
+		var input I
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, fmt.Errorf("deserialize input: %w", err)
 		}
-		var msg M
-		if err := json.Unmarshal(rawMsg, &msg); err != nil {
-			return nil, fmt.Errorf("deserialize msg: %w", err)
+		var externalInput E
+		if err := json.Unmarshal(rawMsg, &externalInput); err != nil {
+			return nil, fmt.Errorf("deserialize externalInput: %w", err)
 		}
-		cont, herr := h(ctx, state, msg)
+		cont, herr := h(ctx, input, externalInput)
 		if herr != nil {
 			return nil, herr
 		}
 		return buildRunOutput(cont, key)
 	}
 	addEntry(w, key, h, runner, opts)
-	return sendHandlerReg[S, M, T]{w: w, key: key}
+	return sendHandlerReg[I, E, T]{w: w, key: key}
 }
 
-// RegisterCallHandler registers a CallHandler keyed by state DurableKind, request DurableKind,
+// RegisterCallHandler registers a CallHandler keyed by input DurableKind, request DurableKind,
 // response DurableKind, and result DurableKind.
 // HandlerOptions configures retry behavior for the handler.
 // Chain .WithTerminalErrorHandler() on the returned registration to register a terminal
 // error handler — it is invoked only after all retries are exhausted, instead
 // of failing the routine.
-func RegisterCallHandler[S Payload, Req Payload, Resp Payload, T Payload](w *Worker, h CallHandler[S, Req, Resp, T], opts HandlerOptions) callHandlerReg[S, Req, Resp, T] {
-	var zeroS S
-	var zeroReq Req
-	var zeroResp Resp
+func RegisterCallHandler[I Payload, EReq Payload, EResp Payload, T Payload](w *Worker, h CallHandler[I, EReq, EResp, T], opts HandlerOptions) callHandlerReg[I, EReq, EResp, T] {
+	var zeroI I
+	var zeroEReq EReq
+	var zeroEResp EResp
 	var zeroT T
-	key := durablecore.CallKey(zeroS.DurableKind(), zeroReq.DurableKind(), zeroResp.DurableKind(), zeroT.DurableKind())
-	runner := func(ctx *Context, rawState json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
-		var state S
-		if err := json.Unmarshal(rawState, &state); err != nil {
-			return nil, fmt.Errorf("deserialize state: %w", err)
+	key := durablecore.CallKey(zeroI.DurableKind(), zeroEReq.DurableKind(), zeroEResp.DurableKind(), zeroT.DurableKind())
+	runner := func(ctx *Context, rawInput json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
+		var input I
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return nil, fmt.Errorf("deserialize input: %w", err)
 		}
-		var req Req
-		if err := json.Unmarshal(rawMsg, &req); err != nil {
-			return nil, fmt.Errorf("deserialize req: %w", err)
+		var externalReq EReq
+		if err := json.Unmarshal(rawMsg, &externalReq); err != nil {
+			return nil, fmt.Errorf("deserialize externalReq: %w", err)
 		}
-		resp, cont, herr := h(ctx, state, req)
+		resp, cont, herr := h(ctx, input, externalReq)
 		if herr != nil {
 			return nil, herr
 		}
@@ -294,5 +294,5 @@ func RegisterCallHandler[S Payload, Req Payload, Resp Payload, T Payload](w *Wor
 		return out, nil
 	}
 	addEntry(w, key, h, runner, opts)
-	return callHandlerReg[S, Req, Resp, T]{w: w, key: key}
+	return callHandlerReg[I, EReq, EResp, T]{w: w, key: key}
 }

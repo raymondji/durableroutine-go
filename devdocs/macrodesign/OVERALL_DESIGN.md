@@ -25,7 +25,7 @@ The suspension-based model solves this cleanly: **user handler functions run as 
 This means:
 - User code is always an activity — write normal Go, call databases, use `time.Now()`, whatever you want
 - The workflow code is 100% library-owned and never changes, so replay is never broken
-- State is explicit and serialisable — trivial to carry across continue-as-new boundaries
+- Input is explicit and serialisable — trivial to carry across continue-as-new boundaries
 
 ### Actor Model Semantics
 
@@ -44,16 +44,16 @@ Each durable routine is an actor with a mailbox. Communication follows actor mod
 - Query (Query): synchronous read-only. Only clients can Query. Returns a static value set via `SetQueryResult`.
 - Routines can only Send to each other — no cross-workflow blocking.
 
-### Per-Handler State
+### Per-Handler Input
 
-There is **no shared state type `S`** across handlers. Each handler declares its own state type. State flows forward explicitly through Continuation cases:
+There is **no shared input type `I`** across handlers. Each handler declares its own input type. Input flows forward explicitly through Continuation cases:
 
 ```go
-type BookingState struct { UserID, ItemID string }
-func (BookingState) DurableKind() string { return "booking" }
+type BookingInput struct { UserID, ItemID string }
+func (BookingInput) DurableKind() string { return "booking" }
 
-type ReservedState struct { UserID, ItemID string }
-func (ReservedState) DurableKind() string { return "booking.reserved" }
+type ReservedInput struct { UserID, ItemID string }
+func (ReservedInput) DurableKind() string { return "booking.reserved" }
 
 type PaymentInfo struct { CardNumber, Expiry string }
 func (PaymentInfo) DurableKind() string { return "payment" }
@@ -65,27 +65,27 @@ type BookingResult struct { Status string }
 type StatusResp struct { Status string }
 func (StatusResp) DurableKind() string { return "get-status" }
 
-func (s *BookingService) ReserveItem(ctx *durable.Context, state BookingState) (*durable.Continuation[BookingResult], error) {
-    reserved := ReservedState{UserID: state.UserID, ItemID: state.ItemID}
+func (s *BookingService) ReserveItem(ctx *durable.Context, input BookingInput) (*durable.Continuation[BookingResult], error) {
+    reserved := ReservedInput{UserID: input.UserID, ItemID: input.ItemID}
     durable.SetQueryResult(ctx, StatusResp{Status: "reserved"})
     return durable.Select[BookingResult](
         durable.ReceiveSend(s.ProcessPayment, reserved),
     ), nil
 }
 
-func (s *BookingService) ProcessPayment(ctx *durable.Context, state ReservedState, msg PaymentInfo) (*durable.Continuation[BookingResult], error) {
-    paid := PaidState{UserID: state.UserID, ItemID: state.ItemID, PaymentID: "PAY-123"}
+func (s *BookingService) ProcessPayment(ctx *durable.Context, input ReservedInput, externalInput PaymentInfo) (*durable.Continuation[BookingResult], error) {
+    paid := PaidInput{UserID: input.UserID, ItemID: input.ItemID, PaymentID: "PAY-123"}
     return durable.Select[BookingResult](
         durable.ReceiveSend(s.ProcessShipping, paid),
     ), nil
 }
 
-func (s *BookingService) ProcessShipping(ctx *durable.Context, state PaidState, msg ShippingInfo) (*durable.Continuation[BookingResult], error) {
+func (s *BookingService) ProcessShipping(ctx *durable.Context, input PaidInput, externalInput ShippingInfo) (*durable.Continuation[BookingResult], error) {
     return durable.Done(BookingResult{Status: "shipped"}), nil
 }
 ```
 
-This eliminates the "bloated shared struct" problem where every step's fields accumulate in a single type.
+This eliminates the "bloated shared struct" problem where every step's fields accumulate in a single input type.
 
 ### API
 
@@ -102,9 +102,9 @@ The API is defined in the [`durable/`](durable/) package:
 - **Terminal error handlers** — registered via the `.WithTerminalErrorHandler()` builder method on the registration returned by each `Register*` function. This enforces at most one terminal error handler at compile time. Invoked only after all retries in the RetryPolicy are exhausted, instead of failing the routine.
 
 Terminal error handlers share the same generic type parameters as the main handler, so Go enforces type safety at compile time:
-- A `TerminalErrorHandler[S, T]` chained on `RegisterHandler` must match the handler's `S` and `T`.
-- A `SendTerminalErrorHandler[S, M, T]` chained on `RegisterSendHandler` must match the handler's `S`, `M`, and `T`.
-- A `CallTerminalErrorHandler[S, Req, Resp, T]` chained on `RegisterCallHandler` must match the handler's `S`, `Req`, `Resp`, and `T`.
+- A `TerminalErrorHandler[I, T]` chained on `RegisterHandler` must match the handler's `I` and `T`.
+- A `SendTerminalErrorHandler[I, E, T]` chained on `RegisterSendHandler` must match the handler's `I`, `E`, and `T`.
+- A `CallTerminalErrorHandler[I, Req, Resp, T]` chained on `RegisterCallHandler` must match the handler's `I`, `Req`, `Resp`, and `T`.
 
 Passing the wrong kind of terminal error handler (e.g., a `SendTerminalErrorHandler` to `RegisterHandler`'s `.WithTerminalErrorHandler()`) is a compile-time error because the function signatures are incompatible.
 
@@ -114,53 +114,53 @@ Retry policies are set at handler registration level only, not on individual con
 
 Because Go does not allow type parameters on methods, these are package-level functions that take `*Worker`. All require `HandlerOptions` and return a typed registration struct with an `WithTerminalErrorHandler` method:
 
-- **`RegisterHandler[S, T](w, handler, opts) handlerReg[S, T]`** — registers a Handler keyed by `handler:{state.DurableKind()}:{result.DurableKind()}`. Any handler registered this way can serve as both a routine entry point (via `Go`) and a continuation target (via `ContinueAfter`, `Continue`, `Default`, `After`). Chain `.WithTerminalErrorHandler(te)` to register a terminal error handler.
-- **`RegisterSendHandler[S, M, T](w, handler, opts) sendHandlerReg[S, M, T]`** — registers a SendHandler keyed by `send:{state.DurableKind()}:{msg.DurableKind()}:{result.DurableKind()}`. Chain `.WithTerminalErrorHandler(te)` to register a terminal error handler.
-- **`RegisterCallHandler[S, Req, Resp, T](w, handler, opts) callHandlerReg[S, Req, Resp, T]`** — registers a CallHandler keyed by `call:{state.DurableKind()}:{req.DurableKind()}:{resp.DurableKind()}:{result.DurableKind()}`. Chain `.WithTerminalErrorHandler(te)` to register a terminal error handler.
+- **`RegisterHandler[I, T](w, handler, opts) handlerReg[I, T]`** — registers a Handler keyed by `handler:{input.DurableKind()}:{result.DurableKind()}`. Any handler registered this way can serve as both a routine entry point (via `Go`) and a continuation target (via `ContinueAfter`, `Continue`, `Default`, `After`). Chain `.WithTerminalErrorHandler(te)` to register a terminal error handler.
+- **`RegisterSendHandler[I, E, T](w, handler, opts) sendHandlerReg[I, E, T]`** — registers a SendHandler keyed by `send:{input.DurableKind()}:{externalInput.DurableKind()}:{result.DurableKind()}`. Chain `.WithTerminalErrorHandler(te)` to register a terminal error handler.
+- **`RegisterCallHandler[I, Req, Resp, T](w, handler, opts) callHandlerReg[I, Req, Resp, T]`** — registers a CallHandler keyed by `call:{input.DurableKind()}:{externalReq.DurableKind()}:{externalResp.DurableKind()}:{result.DurableKind()}`. Chain `.WithTerminalErrorHandler(te)` to register a terminal error handler.
 
 #### Handler Signatures
 
-All generic type params (`State`, `M`, `Req`, `Resp`, `Result`) are constrained to `Payload`:
+All generic type params (`Input`, `ExternalInput`, `ExternalReq`, `ExternalResp`, `Result`) are constrained to `Payload`:
 
-- **`Handler[State, Result]`** — `func(ctx *Context, state State) (*Continuation[Result], error)`
-- **`SendHandler[State, M, Result]`** — `func(ctx *Context, state State, msg M) (*Continuation[Result], error)`
-- **`CallHandler[State, Req, Resp, Result]`** — `func(ctx *Context, state State, req Req) (Resp, *Continuation[Result], error)`
+- **`Handler[Input, Result]`** — `func(ctx *Context, input Input) (*Continuation[Result], error)`
+- **`SendHandler[Input, ExternalInput, Result]`** — `func(ctx *Context, input Input, externalInput ExternalInput) (*Continuation[Result], error)`
+- **`CallHandler[Input, ExternalReq, ExternalResp, Result]`** — `func(ctx *Context, input Input, externalReq ExternalReq) (ExternalResp, *Continuation[Result], error)`
 
 #### Terminal Error Handler Signatures
 
 Terminal error handlers are invoked only after all retries configured in the RetryPolicy are exhausted, instead of failing the routine. They receive the same inputs as the original handler plus the final error:
 
-- **`TerminalErrorHandler[State, Result]`** — `func(ctx *Context, state State, err error) (*Continuation[Result], error)`
-- **`SendTerminalErrorHandler[State, M, Result]`** — `func(ctx *Context, state State, msg M, err error) (*Continuation[Result], error)`
-- **`CallTerminalErrorHandler[State, Req, Resp, Result]`** — `func(ctx *Context, state State, req Req, err error) (Resp, *Continuation[Result], error)`
+- **`TerminalErrorHandler[Input, Result]`** — `func(ctx *Context, input Input, err error) (*Continuation[Result], error)`
+- **`SendTerminalErrorHandler[Input, ExternalInput, Result]`** — `func(ctx *Context, input Input, externalInput ExternalInput, err error) (*Continuation[Result], error)`
+- **`CallTerminalErrorHandler[Input, ExternalReq, ExternalResp, Result]`** — `func(ctx *Context, input Input, externalReq ExternalReq, err error) (ExternalResp, *Continuation[Result], error)`
 
 #### Continuation and Constructors
 
 `Continuation[T]` is generic over the routine's result type `T`. All handlers in a routine return `*Continuation[T]`. Use `Unit` for routines with no meaningful result.
 
 - **`Done[T](result T)`** — complete the routine with a typed result. Clients retrieve it via `Handle[T].Get`.
-- **`ContinueAfter(duration, handler, state)`** — wait until a timer fires. `T` inferred from handler.
+- **`ContinueAfter(duration, handler, input)`** — wait until a timer fires. `T` inferred from handler.
 - **`Select[T](cases...)`** — wait for the first of several events (ReceiveSend, ReceiveCall, After, Default). `T` must be specified explicitly.
-- **`Continue(handler, state)`** — checkpoint state and immediately invoke handler (no waiting). `T` inferred from handler.
-- **`After(duration, handler, state)`** — a timer case for use inside Select
-- **`ReceiveSend(handler, state)`** — fires when a Send message arrives (inbox name = `M.DurableKind()`)
-- **`ReceiveCall(handler, state)`** — fires when a client calls a method (method name = `Req.DurableKind()`)
-- **`Default(handler, state)`** — a case for use inside Select that fires immediately if no other cases are ready (maps to `sel.AddDefault()`)
+- **`Continue(handler, input)`** — checkpoint input and immediately invoke handler (no waiting). `T` inferred from handler.
+- **`After(duration, handler, input)`** — a timer case for use inside Select
+- **`ReceiveSend(handler, input)`** — fires when a Send message arrives (inbox name = `ExternalInput.DurableKind()`)
+- **`ReceiveCall(handler, input)`** — fires when a client calls a method (method name = `ExternalReq.DurableKind()`)
+- **`Default(handler, input)`** — a case for use inside Select that fires immediately if no other cases are ready (maps to `sel.AddDefault()`)
 
 #### Context
 
 - **`Context`** — wraps `context.Context` with routine capabilities
 - **`ctx.RoutineID()`** — get the current routine's ID (reply address for children)
-- **`BufferStart[S, T](ctx, routineID, handler, state)`** — start a child routine (state.DurableKind() determines handler). Executes after the current handler returns its Continuation.
-- **`BufferSend[S, M, T](ctx, routineID, handler, msg)`** — buffer a fire-and-forget message to another routine (delivered after handler returns). The handler is passed for type inference; use a nil stub for type inference when the sender doesn't have the receiver's handler. Inbox name = `msg.DurableKind()`.
+- **`BufferStart[I, T](ctx, routineID, handler, input)`** — start a child routine (input.DurableKind() determines handler). Executes after the current handler returns its Continuation.
+- **`BufferSend[I, E, T](ctx, routineID, handler, externalInput)`** — buffer a fire-and-forget message to another routine (delivered after handler returns). The handler is passed for type inference; use a nil stub for type inference when the sender doesn't have the receiver's handler. Inbox name = `externalInput.DurableKind()`.
 - **`SetQueryResult[Resp](ctx, resp)`** — store a static query result that persists across state transitions. Takes effect after the current handler returns its Continuation. Replaces any existing result for the same `Resp.DurableKind()`. Clients retrieve the value via `Query`. Maps to a Temporal Query handler that returns the stored value.
 
 #### Client (typed top-level functions)
 
-- **`Go[S, T](client, ctx, id, handler, state)`** — start a new routine instance (state.DurableKind() determines handler). The handler function is passed for Go type inference of the result type `T`. If `id` is empty, a random UUID is generated. Returns a typed `Handle[T]`.
+- **`Go[I, T](client, ctx, id, handler, input)`** — start a new routine instance (input.DurableKind() determines handler). The handler function is passed for Go type inference of the result type `T`. If `id` is empty, a random UUID is generated. Returns a typed `Handle[T]`.
 - **`Handle[T].Get(ctx)`** — blocks until the routine completes and returns the typed result. Maps to Temporal's `WorkflowRun.Get`.
-- **`Send[S, M, T](client, ctx, id, handler, msg)`** — fire-and-forget message to a routine. The handler is passed for type inference of the target state kind (not called). Inbox name = `msg.DurableKind()`.
-- **`Call[S, Req, Resp, T](client, ctx, id, handler, req)`** — synchronous request-response. The handler function is passed for Go type inference of `Resp` (not called).
+- **`Send[I, E, T](client, ctx, id, handler, externalInput)`** — fire-and-forget message to a routine. The handler is passed for type inference of the target input kind (not called). Inbox name = `externalInput.DurableKind()`.
+- **`Call[I, Req, Resp, T](client, ctx, id, handler, req)`** — synchronous request-response. The handler function is passed for Go type inference of `Resp` (not called).
 - **`Query[Resp](client, ctx, id, resp)`** — synchronous read-only query. Pass a zero value of the response type for routing (via `DurableKind()`) and type inference.
 - **`Get[T](client, ctx, id)`** — blocks until the routine completes and returns the typed result. Useful when you only have a routine ID (e.g., from config or database) and not a `Handle`.
 
@@ -185,14 +185,14 @@ See the [`docs/howto/`](docs/howto/) directory:
 
 | Pattern | durable routine approach |
 |---|---|
-| **Do something, sleep, do something** | Handler does work, returns `ContinueAfter(duration, nextHandler, state)`. Each handler is an activity. See [`docs/howto/reminder/`](docs/howto/reminder/reminder.go). |
+| **Do something, sleep, do something** | Handler does work, returns `ContinueAfter(duration, nextHandler, input)`. Each handler is an activity. See [`docs/howto/reminder/`](docs/howto/reminder/reminder.go). |
 | **Wait for one of several events** | Handler returns `Select(ReceiveSend(...), ReceiveCall(...), After(...))`. The runtime sets up a Temporal selector. Query results are registered separately via `SetQueryResult`. See [`docs/howto/order/`](docs/howto/order/order.go). |
-| **Fan-out / fan-in** | Parent starts children via `BufferStart(ctx, id, handler, state)`. Each child calls `durable.BufferSend(ctx, parentID, handler, result)` to send results back. Parent collects via `ReceiveSend`, one at a time. See [`docs/howto/fanout/`](docs/howto/fanout/fanout.go). |
-| **Producer-consumer** | Producer calls `durable.BufferSend` in a loop to send items. Consumer uses `Select(ReceiveSend(receiveItem, state), ReceiveSend(receiveDone, state))` to process items and detect completion. See [`docs/howto/pipeline/`](docs/howto/pipeline/pipeline.go). |
+| **Fan-out / fan-in** | Parent starts children via `BufferStart(ctx, id, handler, input)`. Each child calls `durable.BufferSend(ctx, parentID, handler, result)` to send results back. Parent collects via `ReceiveSend`, one at a time. See [`docs/howto/fanout/`](docs/howto/fanout/fanout.go). |
+| **Producer-consumer** | Producer calls `durable.BufferSend` in a loop to send items. Consumer uses `Select(ReceiveSend(receiveItem, input), ReceiveSend(receiveDone, input))` to process items and detect completion. See [`docs/howto/pipeline/`](docs/howto/pipeline/pipeline.go). |
 | **SAGA compensation** | Register terminal error handlers via `WithTerminalErrorHandler` that run compensation logic when retries are exhausted. See [`docs/howto/saga/`](docs/howto/saga/saga.go). |
-| **Checkpoint and continue** | Handler does expensive work, returns `Continue(nextHandler, state)`. The runtime checkpoints state (continue-as-new boundary) and immediately invokes the next handler without waiting. |
-| **Cancellable batch processing** | Process items in chunks. Between chunks, return `Select(ReceiveSend(cancelHandler, state), Default(nextChunkHandler, state))`. If a cancel signal is pending it fires; otherwise Default continues to the next chunk. See [`docs/howto/batch/`](docs/howto/batch/batch.go). |
-| **Drain buffered signals** | Handler returns `Select(ReceiveSend(handler, state), Default(doneHandler, state))`. Processes pending signals one at a time; when none are buffered, the default case fires. |
+| **Checkpoint and continue** | Handler does expensive work, returns `Continue(nextHandler, input)`. The runtime checkpoints input (continue-as-new boundary) and immediately invokes the next handler without waiting. |
+| **Cancellable batch processing** | Process items in chunks. Between chunks, return `Select(ReceiveSend(cancelHandler, input), Default(nextChunkHandler, input))`. If a cancel signal is pending it fires; otherwise Default continues to the next chunk. See [`docs/howto/batch/`](docs/howto/batch/batch.go). |
+| **Drain buffered signals** | Handler returns `Select(ReceiveSend(handler, input), Default(doneHandler, input))`. Processes pending signals one at a time; when none are buffered, the default case fires. |
 | **Request-response** | Client uses `Call(client, ctx, id, handler, req)` to invoke a method that returns a typed response. |
 | **Read-only status check** | Client uses `Query(client, ctx, id, resp)` for instant, non-mutating reads of static query results. |
 
@@ -202,17 +202,17 @@ Each routine maps to a single Temporal workflow. The workflow function is entire
 
 ```
 RoutineWorkflow(ctx, routineID):
-    state = initial state (deserialized from workflow input)
-    handler = registered handler for state.DurableKind()
+    input = initial input (deserialized from workflow input)
+    handler = registered handler for input.DurableKind()
 
     loop:
         // Run the handler as an activity
-        cont, err = executeActivity(handler, state)
+        cont, err = executeActivity(handler, input)
         if err != nil:
             // Check if a terminal error handler is registered
             if handler has WithTerminalErrorHandlerKey:
                 errorHandler = lookup(WithTerminalErrorHandlerKey)
-                cont, err = executeActivity(errorHandler, state, err)
+                cont, err = executeActivity(errorHandler, input, err)
                 if err != nil: fail workflow
             else:
                 fail workflow
@@ -223,7 +223,7 @@ RoutineWorkflow(ctx, routineID):
         // If the only case is immediate (Continue), skip the selector entirely
         if len(cont.cases) == 1 && cont.cases[0].immediate:
             handler = cont.cases[0].handler
-            state = cont.cases[0].state
+            input = cont.cases[0].input
             continue
 
         for each case in cont.cases:
@@ -231,24 +231,24 @@ RoutineWorkflow(ctx, routineID):
                 // Default case — fires if no other cases are ready
                 sel.AddDefault(func() {
                     handler = case.handler
-                    state = case.state
+                    input = case.input
                 })
             if case.timer:
                 sel.AddTimer(d, func() {
                     handler = case.handler
-                    state = case.state
+                    input = case.input
                 })
             if case.inbox (ReceiveSend):
                 // Register a Signal handler
                 signalChan = workflow.GetSignalChannel(ctx, case.inboxName)
                 sel.AddReceive(signalChan, func(msg) {
                     handler = case.handler  // with msg bound
-                    state = case.state
+                    input = case.input
                 })
             if case.method (ReceiveCall):
                 // Register an Update handler
                 workflow.SetUpdateHandler(ctx, case.methodName, func(req) (resp, error) {
-                    resp, cont, err = executeActivity(case.handler, case.state, req)
+                    resp, cont, err = executeActivity(case.handler, case.input, req)
                     return resp, err
                 })
         sel.Select(ctx)
@@ -262,18 +262,18 @@ RoutineWorkflow(ctx, routineID):
 
         // Handle child starts from BufferStart calls
         for each start in ctx.startRequests:
-            workflow.ExecuteChildWorkflow(ctx, start.state.DurableKind(), start.state)
+            workflow.ExecuteChildWorkflow(ctx, start.input.DurableKind(), start.input)
 
         // Check continue-as-new
         if shouldContinueAsNew():
-            return continueAsNew(ctx, state, handler)
+            return continueAsNew(ctx, input, handler)
 ```
 
 Key implementation details:
 - **Handlers run as activities** — no replay-safety concerns for user code
-- **State is per-handler and serialisable** — each case carries its own state, trivially serialized
+- **Input is per-handler and serialisable** — each case carries its own input, trivially serialized
 - **The workflow loop is library code** — it never changes, so replay is never broken by user code changes
-- **Continue-as-new is trivial** — serialize current state and handler identifier, restart the loop
+- **Continue-as-new is trivial** — serialize current input and handler identifier, restart the loop
 - **Signal → ReceiveSend**: buffered Temporal signals dispatched to the matching inbox handler
 - **Update → ReceiveCall**: Temporal update handler runs the call handler as an activity, returns response
 - **Query → SetQueryResult**: Temporal query handler runs synchronously in workflow context (read-only), returning the stored static value. Registered via `SetQueryResult` on Context, persists across state transitions until overridden.
@@ -284,22 +284,22 @@ Key implementation details:
 Because the workflow is a simple loop (run activity → interpret continuation → repeat), continue-as-new is straightforward:
 
 1. After each iteration, check `workflow.GetInfo(ctx).GetContinueAsNewSuggested()`
-2. If suggested, serialize the current state and a handler identifier
-3. Call `workflow.NewContinueAsNewError` with the serialized state
-4. The new execution resumes the loop with the same state and next handler
+2. If suggested, serialize the current input and a handler identifier
+3. Call `workflow.NewContinueAsNewError` with the serialized input
+4. The new execution resumes the loop with the same input and next handler
 
 ### Tradeoffs
 
 **Advantages:**
 - User code has zero replay-safety constraints — handlers are pure activities
-- Per-handler state eliminates bloated shared structs — each handler only carries what it needs
+- Per-handler input eliminates bloated shared structs — each handler only carries what it needs
 - The workflow code is 100% library-owned — user code changes never break replay
 - Simple mental model: handler runs → returns what to wait for → runtime waits → next handler runs
 - Type-safe messages — message types self-identify via `DurableKind()`, handler functions provide type inference for `Call`/`Query`
 - Type-safe results — `Continuation[T]` enforces that all handlers in a routine agree on the result type at compile time. `Go` returns a typed `Handle[T]` so `Get` requires no manual type specification. `Done(result)` and `Handle[T].Get` are both typed.
 - Call/Send/Query maps cleanly to Temporal's Update/Signal/Query primitives
 - Uniform handler model — no distinction between "routine entry point" and "continuation handler". Any `Handler` registered with `RegisterHandler` can serve as either.
-- River-style registration: state types self-identify via `DurableKind()`, handlers registered at startup
+- River-style registration: input types self-identify via `DurableKind()`, handlers registered at startup
 - Terminal error handlers enable compensation patterns (SAGA) — instead of failing the routine when retries are exhausted, transition to a terminal error handler that can compensate and continue
 
 **Disadvantages:**
@@ -324,8 +324,8 @@ Durable routine draws from several systems. This section maps concepts across th
 | Concept | durable routine | Temporal | Elixir GenServer | Go goroutines |
 |---|---|---|---|---|
 | **Unit of execution** | Routine | Workflow | GenServer process | Goroutine |
-| **Start** | `Go(client, ctx, id, handler, state)` | `client.ExecuteWorkflow(...)` | `GenServer.start_link(mod, args)` | `go func()` |
-| **Fire-and-forget message** | `Send[S,M,T]` / `BufferSend[S,M,T]` | Signal | `GenServer.cast` | `ch <- msg` |
+| **Start** | `Go(client, ctx, id, handler, input)` | `client.ExecuteWorkflow(...)` | `GenServer.start_link(mod, args)` | `go func()` |
+| **Fire-and-forget message** | `Send[I,E,T]` / `BufferSend[I,E,T]` | Signal | `GenServer.cast` | `ch <- msg` |
 | **Request-response** | `Call` | Update | `GenServer.call` | (no direct equivalent) |
 | **Read-only query** | `Query` + `SetQueryResult` | Query | `:sys.get_state` / custom call | (no direct equivalent) |
 | **Get result** | `Handle.Get` / `Get` | `WorkflowRun.Get` | (process exit value) | (no direct equivalent) |
@@ -344,4 +344,4 @@ Durable routine draws from several systems. This section maps concepts across th
 2. **State size limits**: Temporal has payload size limits (~2MB default). Large state may need external storage.
 3. **Testing**: Should support a local/in-memory mode for unit testing without a Temporal server.
 4. **Observability**: How do we expose Temporal's native visibility (search attributes, workflow status) through the abstraction?
-5. ~~**Handler identification for continue-as-new**: Need a strategy for identifying handler functions across continue-as-new boundaries (function names, registration, etc.).~~ **Resolved**: All types implement `Payload` (`DurableKind() string`). Handlers are registered in a flat map with composite keys (`handler:{state.DurableKind()}:{result.DurableKind()}`, `send:{state.DurableKind()}:{msg.DurableKind()}:{result.DurableKind()}`, `call:{state.DurableKind()}:{req.DurableKind()}:{resp.DurableKind()}:{result.DurableKind()}`). Error handlers are registered under `error:{originalKey}`. Each `Case` carries a `handlerKey` for runtime lookup after continue-as-new.
+5. ~~**Handler identification for continue-as-new**: Need a strategy for identifying handler functions across continue-as-new boundaries (function names, registration, etc.).~~ **Resolved**: All types implement `Payload` (`DurableKind() string`). Handlers are registered in a flat map with composite keys (`handler:{input.DurableKind()}:{result.DurableKind()}`, `send:{input.DurableKind()}:{externalInput.DurableKind()}:{result.DurableKind()}`, `call:{input.DurableKind()}:{externalReq.DurableKind()}:{externalResp.DurableKind()}:{result.DurableKind()}`). Error handlers are registered under `error:{originalKey}`. Each `Case` carries a `handlerKey` for runtime lookup after continue-as-new.

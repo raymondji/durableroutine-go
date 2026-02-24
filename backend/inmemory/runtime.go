@@ -71,7 +71,7 @@ func (r *Runtime) Client() durable.Client {
 }
 
 // start creates a new instance and launches its goroutine. Caller must NOT hold r.mu.
-func (r *Runtime) start(id string, kind string, resultKind string, state any) error {
+func (r *Runtime) start(id string, kind string, resultKind string, input any) error {
 	r.mu.Lock()
 	if _, exists := r.instances[id]; exists {
 		r.mu.Unlock()
@@ -89,19 +89,19 @@ func (r *Runtime) start(id string, kind string, resultKind string, state any) er
 	r.mu.Unlock()
 
 	handlerKey := durablecore.HandlerKey(kind, resultKind)
-	go r.runInstance(inst, handlerKey, state, nil)
+	go r.runInstance(inst, handlerKey, input, nil)
 	return nil
 }
 
 // runInstance is the goroutine entry point for a routine instance.
-func (r *Runtime) runInstance(inst *instance, handlerKey string, state any, msg any) {
+func (r *Runtime) runInstance(inst *instance, handlerKey string, input any, msg any) {
 	defer close(inst.doneChan)
 
 	// respCh is non-nil when the current handler invocation is from a Call.
 	var respCh chan callResp
 
 	for {
-		output, err := r.runHandler(inst, handlerKey, state, msg)
+		output, err := r.runHandler(inst, handlerKey, input, msg)
 		if err != nil {
 			if respCh != nil {
 				respCh <- callResp{err: err}
@@ -143,21 +143,21 @@ func (r *Runtime) runInstance(inst *instance, handlerKey string, state any, msg 
 		caseIdx, caseMsg, respCh = r.waitForCase(inst, output.Cases)
 		c := output.Cases[caseIdx]
 		handlerKey = c.HandlerKey()
-		state = c.State()
+		input = c.Input()
 		msg = caseMsg
 	}
 }
 
 // runHandler invokes a handler, with terminal error handler fallback.
-func (r *Runtime) runHandler(inst *instance, handlerKey string, state any, msg any) (*durable.RunOutput, error) {
+func (r *Runtime) runHandler(inst *instance, handlerKey string, input any, msg any) (*durable.RunOutput, error) {
 	entry, ok := r.handlers[handlerKey]
 	if !ok {
 		return nil, fmt.Errorf("no handler registered for key: %s", handlerKey)
 	}
 
-	rawState, err := json.Marshal(state)
+	rawInput, err := json.Marshal(input)
 	if err != nil {
-		return nil, fmt.Errorf("marshal state: %w", err)
+		return nil, fmt.Errorf("marshal input: %w", err)
 	}
 
 	var rawMsg json.RawMessage
@@ -169,14 +169,14 @@ func (r *Runtime) runHandler(inst *instance, handlerKey string, state any, msg a
 	}
 
 	sctx := durable.NewContext(context.Background(), inst.id)
-	output, err := entry.Runner(sctx, rawState, rawMsg, "")
+	output, err := entry.Runner(sctx, rawInput, rawMsg, "")
 	if err != nil {
 		// Check for a terminal error handler.
 		teKey := entry.Options.WithTerminalErrorHandlerKey()
 		if teKey != "" {
 			if teEntry, ok := r.handlers[teKey]; ok {
 				teSctx := durable.NewContext(context.Background(), inst.id)
-				teOutput, teErr := teEntry.Runner(teSctx, rawState, rawMsg, err.Error())
+				teOutput, teErr := teEntry.Runner(teSctx, rawInput, rawMsg, err.Error())
 				if teErr != nil {
 					return nil, teErr
 				}
@@ -205,12 +205,12 @@ func (r *Runtime) applyContextEffects(inst *instance, sctx *durable.Context) {
 
 	// Start child routines.
 	for _, sr := range sctx.StartRequests() {
-		r.start(sr.RoutineID, sr.StateKind, sr.ResultKind, sr.State)
+		r.start(sr.RoutineID, sr.InputKind, sr.ResultKind, sr.Input)
 	}
 
 	// Send messages to other instances.
 	for _, sr := range sctx.SendRequests() {
-		sendKey := durablecore.SendKey(sr.StateKind, sr.MsgKind, sr.ResultKind)
+		sendKey := durablecore.SendKey(sr.InputKind, sr.ExternalInputKind, sr.ResultKind)
 		r.mu.Lock()
 		target, ok := r.instances[sr.RoutineID]
 		r.mu.Unlock()

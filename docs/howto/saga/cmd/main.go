@@ -19,7 +19,7 @@ func main() {
 	demorunner.Run(w, func(client durable.Client) {
 		ctx := context.Background()
 
-		h, err := durable.Go(client, ctx, "trip-789", svc.BookFlight, saga.TripState{
+		h, err := durable.Go(client, ctx, "trip-789", svc.BookFlight, saga.TripInput{
 			TripID:      "TRIP-789",
 			FlightID:    "FL-100",
 			HotelID:     "HT-200",

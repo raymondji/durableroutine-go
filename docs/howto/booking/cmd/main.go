@@ -24,7 +24,7 @@ func main() {
 		ctx := context.Background()
 
 		h, err := durable.Go(client, ctx, "booking-123", svc.ReserveItem,
-			booking.BookingState{UserID: "user-42", ItemID: "SKU-900"})
+			booking.BookingInput{UserID: "user-42", ItemID: "SKU-900"})
 		if err != nil {
 			log.Fatal(err)
 		}

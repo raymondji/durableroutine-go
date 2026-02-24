@@ -20,7 +20,7 @@ func main() {
 	demorunner.Run(w, func(client durable.Client) {
 		ctx := context.Background()
 
-		h, err := durable.Go(client, ctx, "auction-001", svc.OpenAuction, auction.AuctionState{
+		h, err := durable.Go(client, ctx, "auction-001", svc.OpenAuction, auction.AuctionInput{
 			ItemName:    "Vintage Guitar",
 			StartingBid: 100.00,
 			Duration:    100 * time.Millisecond,

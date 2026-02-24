@@ -18,32 +18,32 @@ import (
 
 // --- Per-step state types ---
 
-type TripState struct {
+type TripInput struct {
 	TripID      string
 	FlightID    string
 	HotelID     string
 	CarRentalID string
 }
 
-func (TripState) DurableKind() string { return "trip-booking" }
+func (TripInput) DurableKind() string { return "trip-booking" }
 
-type FlightBookedState struct {
+type FlightBookedInput struct {
 	TripID             string
 	HotelID            string
 	CarRentalID        string
 	FlightConfirmation string
 }
 
-func (FlightBookedState) DurableKind() string { return "trip.flight-booked" }
+func (FlightBookedInput) DurableKind() string { return "trip.flight-booked" }
 
-type HotelBookedState struct {
+type HotelBookedInput struct {
 	TripID             string
 	CarRentalID        string
 	FlightConfirmation string
 	HotelConfirmation  string
 }
 
-func (HotelBookedState) DurableKind() string { return "trip.hotel-booked" }
+func (HotelBookedInput) DurableKind() string { return "trip.hotel-booked" }
 
 // --- Result ---
 
@@ -64,58 +64,58 @@ type TripService struct {
 	BookCarFn    func(ctx context.Context, carID string) (string, error)    // if non-nil, replaces default
 }
 
-func (s *TripService) BookFlight(ctx *durable.Context, state TripState) (*durable.Continuation[TripResult], error) {
-	flightConf, err := s.bookFlight(ctx, state.FlightID)
+func (s *TripService) BookFlight(ctx *durable.Context, input TripInput) (*durable.Continuation[TripResult], error) {
+	flightConf, err := s.bookFlight(ctx, input.FlightID)
 	if err != nil {
 		return nil, fmt.Errorf("book flight: %w", err)
 	}
 
-	fmt.Printf("trip %s: flight booked (%s)\n", state.TripID, flightConf)
-	return durable.Continue(s.BookHotel, FlightBookedState{
-		TripID:             state.TripID,
-		HotelID:            state.HotelID,
-		CarRentalID:        state.CarRentalID,
+	fmt.Printf("trip %s: flight booked (%s)\n", input.TripID, flightConf)
+	return durable.Continue(s.BookHotel, FlightBookedInput{
+		TripID:             input.TripID,
+		HotelID:            input.HotelID,
+		CarRentalID:        input.CarRentalID,
 		FlightConfirmation: flightConf,
 	}), nil
 }
 
-func (s *TripService) BookHotel(ctx *durable.Context, state FlightBookedState) (*durable.Continuation[TripResult], error) {
-	hotelConf, err := s.bookHotel(ctx, state.HotelID)
+func (s *TripService) BookHotel(ctx *durable.Context, input FlightBookedInput) (*durable.Continuation[TripResult], error) {
+	hotelConf, err := s.bookHotel(ctx, input.HotelID)
 	if err != nil {
 		return nil, fmt.Errorf("book hotel: %w", err)
 	}
 
-	fmt.Printf("trip %s: hotel booked (%s)\n", state.TripID, hotelConf)
-	return durable.Continue(s.BookCar, HotelBookedState{
-		TripID:             state.TripID,
-		CarRentalID:        state.CarRentalID,
-		FlightConfirmation: state.FlightConfirmation,
+	fmt.Printf("trip %s: hotel booked (%s)\n", input.TripID, hotelConf)
+	return durable.Continue(s.BookCar, HotelBookedInput{
+		TripID:             input.TripID,
+		CarRentalID:        input.CarRentalID,
+		FlightConfirmation: input.FlightConfirmation,
 		HotelConfirmation:  hotelConf,
 	}), nil
 }
 
-func (s *TripService) CompensateHotel(ctx *durable.Context, state FlightBookedState, err error) (*durable.Continuation[TripResult], error) {
-	s.cancelFlight(ctx, state.FlightConfirmation)
+func (s *TripService) CompensateHotel(ctx *durable.Context, input FlightBookedInput, err error) (*durable.Continuation[TripResult], error) {
+	s.cancelFlight(ctx, input.FlightConfirmation)
 	return nil, fmt.Errorf("book hotel failed, compensated flight: %w", err)
 }
 
-func (s *TripService) BookCar(ctx *durable.Context, state HotelBookedState) (*durable.Continuation[TripResult], error) {
-	carConf, err := s.bookCar(ctx, state.CarRentalID)
+func (s *TripService) BookCar(ctx *durable.Context, input HotelBookedInput) (*durable.Continuation[TripResult], error) {
+	carConf, err := s.bookCar(ctx, input.CarRentalID)
 	if err != nil {
 		return nil, fmt.Errorf("book car: %w", err)
 	}
 
-	fmt.Printf("trip %s: car booked (%s), trip fully booked\n", state.TripID, carConf)
+	fmt.Printf("trip %s: car booked (%s), trip fully booked\n", input.TripID, carConf)
 	return durable.Done(TripResult{
-		FlightConfirmation: state.FlightConfirmation,
-		HotelConfirmation:  state.HotelConfirmation,
+		FlightConfirmation: input.FlightConfirmation,
+		HotelConfirmation:  input.HotelConfirmation,
 		CarConfirmation:    carConf,
 	}), nil
 }
 
-func (s *TripService) CompensateCar(ctx *durable.Context, state HotelBookedState, err error) (*durable.Continuation[TripResult], error) {
-	s.cancelHotel(ctx, state.HotelConfirmation)
-	s.cancelFlight(ctx, state.FlightConfirmation)
+func (s *TripService) CompensateCar(ctx *durable.Context, input HotelBookedInput, err error) (*durable.Continuation[TripResult], error) {
+	s.cancelHotel(ctx, input.HotelConfirmation)
+	s.cancelFlight(ctx, input.FlightConfirmation)
 	return nil, fmt.Errorf("book car failed, compensated hotel and flight: %w", err)
 }
 

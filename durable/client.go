@@ -12,8 +12,8 @@ import (
 // wrapper functions (Go, Send, Call, Query, Get).
 type Client interface {
 	start(ctx context.Context, id string, kind string, resultKind string, state any) error
-	send(ctx context.Context, id string, stateKind string, msgKind string, resultKind string, msg any) error
-	call(ctx context.Context, id string, stateKind string, reqKind string, respKind string, resultKind string, req any) (any, error)
+	send(ctx context.Context, id string, inputKind string, externalInputKind string, resultKind string, msg any) error
+	call(ctx context.Context, id string, inputKind string, externalReqKind string, externalRespKind string, resultKind string, req any) (any, error)
 	query(ctx context.Context, id string, queryName string) (any, error)
 	get(ctx context.Context, id string) (any, error)
 }
@@ -23,8 +23,8 @@ type Client interface {
 // into a Client usable with the typed wrapper functions.
 type ClientImpl interface {
 	Go(ctx context.Context, id string, kind string, resultKind string, state any) error
-	Send(ctx context.Context, id string, stateKind string, msgKind string, resultKind string, msg any) error
-	Call(ctx context.Context, id string, stateKind string, reqKind string, respKind string, resultKind string, req any) (any, error)
+	Send(ctx context.Context, id string, inputKind string, externalInputKind string, resultKind string, msg any) error
+	Call(ctx context.Context, id string, inputKind string, externalReqKind string, externalRespKind string, resultKind string, req any) (any, error)
 	Query(ctx context.Context, id string, queryName string) (any, error)
 	Get(ctx context.Context, id string) (any, error)
 }
@@ -41,11 +41,11 @@ type clientBridge struct {
 func (b *clientBridge) start(ctx context.Context, id string, kind string, resultKind string, state any) error {
 	return b.impl.Go(ctx, id, kind, resultKind, state)
 }
-func (b *clientBridge) send(ctx context.Context, id string, stateKind string, msgKind string, resultKind string, msg any) error {
-	return b.impl.Send(ctx, id, stateKind, msgKind, resultKind, msg)
+func (b *clientBridge) send(ctx context.Context, id string, inputKind string, externalInputKind string, resultKind string, msg any) error {
+	return b.impl.Send(ctx, id, inputKind, externalInputKind, resultKind, msg)
 }
-func (b *clientBridge) call(ctx context.Context, id string, stateKind string, reqKind string, respKind string, resultKind string, req any) (any, error) {
-	return b.impl.Call(ctx, id, stateKind, reqKind, respKind, resultKind, req)
+func (b *clientBridge) call(ctx context.Context, id string, inputKind string, externalReqKind string, externalRespKind string, resultKind string, req any) (any, error) {
+	return b.impl.Call(ctx, id, inputKind, externalReqKind, externalRespKind, resultKind, req)
 }
 func (b *clientBridge) query(ctx context.Context, id string, queryName string) (any, error) {
 	return b.impl.Query(ctx, id, queryName)
@@ -73,7 +73,7 @@ func (h Handle[T]) Get(ctx context.Context) (T, error) {
 	return convertResult[T](raw)
 }
 
-// Go begins a new instance of a durable routine. The state.DurableKind() and result
+// Go begins a new instance of a durable routine. The input.DurableKind() and result
 // type's DurableKind() determine which registered handler runs (looked up by
 // "handler:{inputKind}:{resultKind}"). The handler parameter is used only for
 // type inference of the result type T — it is not called. Pass the same function
@@ -81,12 +81,12 @@ func (h Handle[T]) Get(ctx context.Context) (T, error) {
 //
 // If id is empty, a random UUID is generated.
 // Returns a typed Handle for retrieving the result.
-func Go[S Payload, T Payload](c Client, ctx context.Context, id string, handler Handler[S, T], state S) (Handle[T], error) {
+func Go[I Payload, T Payload](c Client, ctx context.Context, id string, handler Handler[I, T], input I) (Handle[T], error) {
 	if id == "" {
 		id = newUUID()
 	}
 	var zeroT T
-	err := c.start(ctx, id, state.DurableKind(), zeroT.DurableKind(), state)
+	err := c.start(ctx, id, input.DurableKind(), zeroT.DurableKind(), input)
 	if err != nil {
 		var zero Handle[T]
 		return zero, err
@@ -95,33 +95,33 @@ func Go[S Payload, T Payload](c Client, ctx context.Context, id string, handler 
 }
 
 // Send sends a fire-and-forget message to a routine's inbox.
-// The handler parameter is used only for type inference of the target state
+// The handler parameter is used only for type inference of the target input
 // type — it is not called. Pass the same function registered with
-// RegisterSendHandler. The state kind, message kind, and result kind are derived
+// RegisterSendHandler. The input kind, message kind, and result kind are derived
 // from the handler's type parameters to build the correct routing key.
-func Send[S Payload, M Payload, T Payload](c Client, ctx context.Context, id string,
-	handler SendHandler[S, M, T], msg M) error {
-	var zeroS S
+func Send[I Payload, E Payload, T Payload](c Client, ctx context.Context, id string,
+	handler SendHandler[I, E, T], externalInput E) error {
+	var zeroI I
 	var zeroT T
-	return c.send(ctx, id, zeroS.DurableKind(), msg.DurableKind(), zeroT.DurableKind(), msg)
+	return c.send(ctx, id, zeroI.DurableKind(), externalInput.DurableKind(), zeroT.DurableKind(), externalInput)
 }
 
 // Call sends a synchronous request to a routine's method and waits
 // for the response. The handler parameter is used only for type inference of
-// the target state and response types — it is not called. Pass the same
-// function registered with RegisterCallHandler. State kind, request kind, and
+// the target input and response types — it is not called. Pass the same
+// function registered with RegisterCallHandler. Input kind, request kind, and
 // result kind are derived from the handler's type parameters for correct routing.
-func Call[S Payload, Req Payload, Resp Payload, T Payload](c Client, ctx context.Context, id string,
-	handler CallHandler[S, Req, Resp, T], req Req) (Resp, error) {
-	var zeroS S
-	var zeroResp Resp
+func Call[I Payload, EReq Payload, EResp Payload, T Payload](c Client, ctx context.Context, id string,
+	handler CallHandler[I, EReq, EResp, T], externalReq EReq) (EResp, error) {
+	var zeroI I
+	var zeroEResp EResp
 	var zeroT T
-	raw, err := c.call(ctx, id, zeroS.DurableKind(), req.DurableKind(), zeroResp.DurableKind(), zeroT.DurableKind(), req)
+	raw, err := c.call(ctx, id, zeroI.DurableKind(), externalReq.DurableKind(), zeroEResp.DurableKind(), zeroT.DurableKind(), externalReq)
 	if err != nil {
-		var zero Resp
+		var zero EResp
 		return zero, err
 	}
-	return convertResult[Resp](raw)
+	return convertResult[EResp](raw)
 }
 
 // Query retrieves a static query result from a routine.

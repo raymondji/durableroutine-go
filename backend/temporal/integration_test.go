@@ -37,35 +37,35 @@ func uniqueID(prefix string) string {
 
 // --- Reminder example types (inline to avoid import cycle) ---
 
-type InitialState struct{ Email string }
+type InitialInput struct{ Email string }
 
-func (InitialState) DurableKind() string { return "reminder.initial" }
+func (InitialInput) DurableKind() string { return "reminder.initial" }
 
-type FollowUpState struct{ Email string }
+type FollowUpInput struct{ Email string }
 
-func (FollowUpState) DurableKind() string { return "reminder.follow-up" }
+func (FollowUpInput) DurableKind() string { return "reminder.follow-up" }
 
-type FinalState struct{ Email string }
+type FinalInput struct{ Email string }
 
-func (FinalState) DurableKind() string { return "reminder.final" }
+func (FinalInput) DurableKind() string { return "reminder.final" }
 
 type reminderService struct {
 	sent []string
 }
 
-func (s *reminderService) SendInitial(ctx *durable.Context, state InitialState) (*durable.Continuation[durable.Unit], error) {
-	s.sent = append(s.sent, "initial:"+state.Email)
+func (s *reminderService) SendInitial(ctx *durable.Context, input InitialInput) (*durable.Continuation[durable.Unit], error) {
+	s.sent = append(s.sent, "initial:"+input.Email)
 	// Use very short timers for testing.
-	return durable.After(1*time.Millisecond, s.SendFollowUp, FollowUpState{Email: state.Email}), nil
+	return durable.After(1*time.Millisecond, s.SendFollowUp, FollowUpInput{Email: input.Email}), nil
 }
 
-func (s *reminderService) SendFollowUp(ctx *durable.Context, state FollowUpState) (*durable.Continuation[durable.Unit], error) {
-	s.sent = append(s.sent, "followup:"+state.Email)
-	return durable.After(1*time.Millisecond, s.SendFinal, FinalState{Email: state.Email}), nil
+func (s *reminderService) SendFollowUp(ctx *durable.Context, input FollowUpInput) (*durable.Continuation[durable.Unit], error) {
+	s.sent = append(s.sent, "followup:"+input.Email)
+	return durable.After(1*time.Millisecond, s.SendFinal, FinalInput{Email: input.Email}), nil
 }
 
-func (s *reminderService) SendFinal(ctx *durable.Context, state FinalState) (*durable.Continuation[durable.Unit], error) {
-	s.sent = append(s.sent, "final:"+state.Email)
+func (s *reminderService) SendFinal(ctx *durable.Context, input FinalInput) (*durable.Continuation[durable.Unit], error) {
+	s.sent = append(s.sent, "final:"+input.Email)
 	return durable.Done(durable.Unit{}), nil
 }
 
@@ -97,7 +97,7 @@ func TestReminderEndToEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h, err := durable.Go(srClient, ctx, uniqueID("reminder"), svc.SendInitial, InitialState{Email: "test@example.com"})
+	h, err := durable.Go(srClient, ctx, uniqueID("reminder"), svc.SendInitial, InitialInput{Email: "test@example.com"})
 	if err != nil {
 		t.Fatalf("Go failed: %v", err)
 	}
@@ -113,16 +113,16 @@ func TestReminderEndToEnd(t *testing.T) {
 
 // --- Simple done-immediately test ---
 
-type SimpleState struct{ Value string }
+type SimpleInput struct{ Value string }
 
-func (SimpleState) DurableKind() string { return "simple" }
+func (SimpleInput) DurableKind() string { return "simple" }
 
 type SimpleResult struct{ Output string }
 
 func (SimpleResult) DurableKind() string { return "simple-result" }
 
-func simpleHandler(ctx *durable.Context, state SimpleState) (*durable.Continuation[SimpleResult], error) {
-	return durable.Done(SimpleResult{Output: "got:" + state.Value}), nil
+func simpleHandler(ctx *durable.Context, input SimpleInput) (*durable.Continuation[SimpleResult], error) {
+	return durable.Done(SimpleResult{Output: "got:" + input.Value}), nil
 }
 
 func TestSimpleDone(t *testing.T) {
@@ -148,7 +148,7 @@ func TestSimpleDone(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h, err := durable.Go(srClient, ctx, uniqueID("simple"), simpleHandler, SimpleState{Value: "hello"})
+	h, err := durable.Go(srClient, ctx, uniqueID("simple"), simpleHandler, SimpleInput{Value: "hello"})
 	if err != nil {
 		t.Fatalf("Go failed: %v", err)
 	}
@@ -166,9 +166,9 @@ func TestSimpleDone(t *testing.T) {
 
 // --- Query test: handler sets a query result, client reads it ---
 
-type QueryState struct{ Counter int }
+type QueryInput struct{ Counter int }
 
-func (QueryState) DurableKind() string { return "query-test" }
+func (QueryInput) DurableKind() string { return "query-test" }
 
 type StatusResp struct{ Count int }
 
@@ -178,12 +178,12 @@ type QueryResult struct{ FinalCount int }
 
 func (QueryResult) DurableKind() string { return "query-result" }
 
-func queryHandler(ctx *durable.Context, state QueryState) (*durable.Continuation[QueryResult], error) {
-	durable.SetQueryResult(ctx, StatusResp{Count: state.Counter})
-	if state.Counter >= 3 {
-		return durable.Done(QueryResult{FinalCount: state.Counter}), nil
+func queryHandler(ctx *durable.Context, input QueryInput) (*durable.Continuation[QueryResult], error) {
+	durable.SetQueryResult(ctx, StatusResp{Count: input.Counter})
+	if input.Counter >= 3 {
+		return durable.Done(QueryResult{FinalCount: input.Counter}), nil
 	}
-	return durable.After(1*time.Millisecond, queryHandler, QueryState{Counter: state.Counter + 1}), nil
+	return durable.After(1*time.Millisecond, queryHandler, QueryInput{Counter: input.Counter + 1}), nil
 }
 
 func TestQueryResult(t *testing.T) {
@@ -209,7 +209,7 @@ func TestQueryResult(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h, err := durable.Go(srClient, ctx, uniqueID("query"), queryHandler, QueryState{Counter: 0})
+	h, err := durable.Go(srClient, ctx, uniqueID("query"), queryHandler, QueryInput{Counter: 0})
 	if err != nil {
 		t.Fatalf("Go failed: %v", err)
 	}
@@ -226,16 +226,16 @@ func TestQueryResult(t *testing.T) {
 
 // --- Send (signal) test: client sends a message, handler receives it ---
 
-type WaitingState struct{ Name string }
+type WaitingInput struct{ Name string }
 
-func (WaitingState) DurableKind() string { return "waiting" }
+func (WaitingInput) DurableKind() string { return "waiting" }
 
-type GotMessageState struct {
+type GotMessageInput struct {
 	Name    string
 	Message string
 }
 
-func (GotMessageState) DurableKind() string { return "got-message" }
+func (GotMessageInput) DurableKind() string { return "got-message" }
 
 type MyMsg struct{ Text string }
 
@@ -247,12 +247,12 @@ func (SendResult) DurableKind() string { return "send-result" }
 
 type sendService struct{}
 
-func (s *sendService) WaitForMsg(ctx *durable.Context, state WaitingState) (*durable.Continuation[SendResult], error) {
-	return durable.ReceiveSend(s.HandleMsg, state), nil
+func (s *sendService) WaitForMsg(ctx *durable.Context, input WaitingInput) (*durable.Continuation[SendResult], error) {
+	return durable.ReceiveSend(s.HandleMsg, input), nil
 }
 
-func (s *sendService) HandleMsg(ctx *durable.Context, state WaitingState, msg MyMsg) (*durable.Continuation[SendResult], error) {
-	return durable.Done(SendResult{ReceivedText: msg.Text}), nil
+func (s *sendService) HandleMsg(ctx *durable.Context, input WaitingInput, externalInput MyMsg) (*durable.Continuation[SendResult], error) {
+	return durable.Done(SendResult{ReceivedText: externalInput.Text}), nil
 }
 
 func TestSendSignal(t *testing.T) {
@@ -282,7 +282,7 @@ func TestSendSignal(t *testing.T) {
 	defer cancel()
 
 	wfID := uniqueID("send")
-	h, err := durable.Go(srClient, ctx, wfID, svc.WaitForMsg, WaitingState{Name: "test"})
+	h, err := durable.Go(srClient, ctx, wfID, svc.WaitForMsg, WaitingInput{Name: "test"})
 	if err != nil {
 		t.Fatalf("Go failed: %v", err)
 	}
@@ -307,16 +307,16 @@ func TestSendSignal(t *testing.T) {
 
 // --- Continue-as-new test: verifies state, queries, sends, and calls survive CAN ---
 
-type CANCountState struct{ Counter int }
+type CANCountInput struct{ Counter int }
 
-func (CANCountState) DurableKind() string { return "can-count" }
+func (CANCountInput) DurableKind() string { return "can-count" }
 
-type CANWaitState struct {
+type CANWaitInput struct {
 	Counter int
 	MsgText string
 }
 
-func (CANWaitState) DurableKind() string { return "can-wait" }
+func (CANWaitInput) DurableKind() string { return "can-wait" }
 
 type CANStatusResp struct{ Count int }
 
@@ -344,31 +344,31 @@ func (CANResult) DurableKind() string { return "can-result" }
 
 type canService struct{}
 
-func (s *canService) Count(ctx *durable.Context, state CANCountState) (*durable.Continuation[CANResult], error) {
-	durable.SetQueryResult(ctx, CANStatusResp{Count: state.Counter})
-	if state.Counter >= 15 {
-		return durable.Continue(s.Wait, CANWaitState{Counter: state.Counter}), nil
+func (s *canService) Count(ctx *durable.Context, input CANCountInput) (*durable.Continuation[CANResult], error) {
+	durable.SetQueryResult(ctx, CANStatusResp{Count: input.Counter})
+	if input.Counter >= 15 {
+		return durable.Continue(s.Wait, CANWaitInput{Counter: input.Counter}), nil
 	}
-	return durable.Continue(s.Count, CANCountState{Counter: state.Counter + 1}), nil
+	return durable.Continue(s.Count, CANCountInput{Counter: input.Counter + 1}), nil
 }
 
-func (s *canService) Wait(ctx *durable.Context, state CANWaitState) (*durable.Continuation[CANResult], error) {
+func (s *canService) Wait(ctx *durable.Context, input CANWaitInput) (*durable.Continuation[CANResult], error) {
 	return durable.Select(
-		durable.ReceiveSend(s.RecvMsg, state),
-		durable.ReceiveCall(s.HandleCall, state),
+		durable.ReceiveSend(s.RecvMsg, input),
+		durable.ReceiveCall(s.HandleCall, input),
 	), nil
 }
 
-func (s *canService) RecvMsg(ctx *durable.Context, state CANWaitState, msg CANMsg) (*durable.Continuation[CANResult], error) {
-	state.MsgText = msg.Text
-	return durable.ReceiveCall(s.HandleCall, state), nil
+func (s *canService) RecvMsg(ctx *durable.Context, input CANWaitInput, externalInput CANMsg) (*durable.Continuation[CANResult], error) {
+	input.MsgText = externalInput.Text
+	return durable.ReceiveCall(s.HandleCall, input), nil
 }
 
-func (s *canService) HandleCall(ctx *durable.Context, state CANWaitState, req CANCallReq) (CANCallResp, *durable.Continuation[CANResult], error) {
-	return CANCallResp{Echo: req.Text}, durable.Done(CANResult{
-		FinalCount: state.Counter,
-		MsgText:    state.MsgText,
-		CallEcho:   req.Text,
+func (s *canService) HandleCall(ctx *durable.Context, input CANWaitInput, externalReq CANCallReq) (CANCallResp, *durable.Continuation[CANResult], error) {
+	return CANCallResp{Echo: externalReq.Text}, durable.Done(CANResult{
+		FinalCount: input.Counter,
+		MsgText:    input.MsgText,
+		CallEcho:   externalReq.Text,
 	}), nil
 }
 
@@ -402,7 +402,7 @@ func TestContinueAsNew(t *testing.T) {
 	defer cancel()
 
 	wfID := uniqueID("can")
-	h, err := durable.Go(srClient, ctx, wfID, svc.Count, CANCountState{Counter: 0})
+	h, err := durable.Go(srClient, ctx, wfID, svc.Count, CANCountInput{Counter: 0})
 	if err != nil {
 		t.Fatalf("Go failed: %v", err)
 	}

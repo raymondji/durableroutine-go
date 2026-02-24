@@ -12,9 +12,9 @@ import (
 
 // --- State ---
 
-type OrderState struct{}
+type OrderInput struct{}
 
-func (OrderState) DurableKind() string { return "order" }
+func (OrderInput) DurableKind() string { return "order" }
 
 // --- Messages ---
 
@@ -51,16 +51,16 @@ func (OrderResult) DurableKind() string { return "order-result" }
 
 // --- Per-step state types ---
 
-type PendingState struct{}
+type PendingInput struct{}
 
-func (PendingState) DurableKind() string { return "order.pending" }
+func (PendingInput) DurableKind() string { return "order.pending" }
 
-type PlacedState struct {
+type PlacedInput struct {
 	OrderID string
 	Items   []string
 }
 
-func (PlacedState) DurableKind() string { return "order.placed" }
+func (PlacedInput) DurableKind() string { return "order.placed" }
 
 // --- Service struct ---
 
@@ -70,44 +70,44 @@ type OrderService struct {
 	ShipTimeout   time.Duration // if zero, defaults to 24h
 }
 
-func (s *OrderService) CreateOrder(ctx *durable.Context, _ OrderState) (*durable.Continuation[OrderResult], error) {
+func (s *OrderService) CreateOrder(ctx *durable.Context, _ OrderInput) (*durable.Continuation[OrderResult], error) {
 	durable.SetQueryResult(ctx, StatusResp{Status: "pending"})
 	expireTimeout := 30 * time.Minute
 	if s.ExpireTimeout > 0 {
 		expireTimeout = s.ExpireTimeout
 	}
 	return durable.Select(
-		durable.ReceiveSend(s.PlaceOrder, PendingState{}),
-		durable.After(expireTimeout, s.ExpireOrder, PendingState{}),
+		durable.ReceiveSend(s.PlaceOrder, PendingInput{}),
+		durable.After(expireTimeout, s.ExpireOrder, PendingInput{}),
 	), nil
 }
 
-func (s *OrderService) PlaceOrder(ctx *durable.Context, _ PendingState, req PlaceOrderReq) (*durable.Continuation[OrderResult], error) {
-	fmt.Printf("placing order %s\n", req.OrderID)
-	placed := PlacedState{OrderID: req.OrderID, Items: req.Items}
+func (s *OrderService) PlaceOrder(ctx *durable.Context, _ PendingInput, externalInput PlaceOrderReq) (*durable.Continuation[OrderResult], error) {
+	fmt.Printf("placing order %s\n", externalInput.OrderID)
+	placed := PlacedInput{OrderID: externalInput.OrderID, Items: externalInput.Items}
 
 	shipTimeout := 24 * time.Hour
 	if s.ShipTimeout > 0 {
 		shipTimeout = s.ShipTimeout
 	}
-	durable.SetQueryResult(ctx, StatusResp{Status: "placed", OrderID: req.OrderID})
+	durable.SetQueryResult(ctx, StatusResp{Status: "placed", OrderID: externalInput.OrderID})
 	return durable.Select(
 		durable.ReceiveSend(s.CancelOrder, placed),
 		durable.After(shipTimeout, s.ShipOrder, placed),
 	), nil
 }
 
-func (s *OrderService) CancelOrder(ctx *durable.Context, state PlacedState, _ CancelOrderReq) (*durable.Continuation[OrderResult], error) {
-	fmt.Printf("cancelling order %s\n", state.OrderID)
-	return durable.Done(OrderResult{Status: "cancelled", OrderID: state.OrderID}), nil
+func (s *OrderService) CancelOrder(ctx *durable.Context, input PlacedInput, _ CancelOrderReq) (*durable.Continuation[OrderResult], error) {
+	fmt.Printf("cancelling order %s\n", input.OrderID)
+	return durable.Done(OrderResult{Status: "cancelled", OrderID: input.OrderID}), nil
 }
 
-func (s *OrderService) ShipOrder(ctx *durable.Context, state PlacedState) (*durable.Continuation[OrderResult], error) {
-	fmt.Printf("shipping order %s\n", state.OrderID)
-	return durable.Done(OrderResult{Status: "shipped", OrderID: state.OrderID}), nil
+func (s *OrderService) ShipOrder(ctx *durable.Context, input PlacedInput) (*durable.Continuation[OrderResult], error) {
+	fmt.Printf("shipping order %s\n", input.OrderID)
+	return durable.Done(OrderResult{Status: "shipped", OrderID: input.OrderID}), nil
 }
 
-func (s *OrderService) ExpireOrder(ctx *durable.Context, _ PendingState) (*durable.Continuation[OrderResult], error) {
+func (s *OrderService) ExpireOrder(ctx *durable.Context, _ PendingInput) (*durable.Continuation[OrderResult], error) {
 	fmt.Println("order timed out, no placement received")
 	return durable.Done(OrderResult{Status: "timed_out"}), nil
 }

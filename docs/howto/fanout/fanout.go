@@ -13,13 +13,13 @@ import (
 
 // --- Child routine ---
 
-type ItemState struct {
+type ItemInput struct {
 	ID       string
 	Data     string
 	ParentID string
 }
 
-func (ItemState) DurableKind() string { return "process-item" }
+func (ItemInput) DurableKind() string { return "process-item" }
 
 // --- Messages ---
 
@@ -32,14 +32,14 @@ func (ItemResult) DurableKind() string { return "results" }
 
 // --- Parent routine ---
 
-type FanoutState struct {
+type FanoutInput struct {
 	Items []struct {
 		ID   string
 		Data string
 	}
 }
 
-func (FanoutState) DurableKind() string { return "fanout" }
+func (FanoutInput) DurableKind() string { return "fanout" }
 
 // --- Results ---
 
@@ -49,12 +49,12 @@ type FanoutResult struct {
 
 func (FanoutResult) DurableKind() string { return "fanout-result" }
 
-type CollectingState struct {
+type CollectingInput struct {
 	Pending int
 	Results []ItemResult
 }
 
-func (CollectingState) DurableKind() string { return "fanout.collecting" }
+func (CollectingInput) DurableKind() string { return "fanout.collecting" }
 
 // --- Service struct ---
 
@@ -62,33 +62,33 @@ type FanoutService struct {
 	// Injected dependencies would go here.
 }
 
-func (s *FanoutService) StartItems(ctx *durable.Context, state FanoutState) (*durable.Continuation[FanoutResult], error) {
+func (s *FanoutService) StartItems(ctx *durable.Context, input FanoutInput) (*durable.Continuation[FanoutResult], error) {
 	parentID := ctx.RoutineID()
 
 	var itemStub *ItemService
-	for _, item := range state.Items {
+	for _, item := range input.Items {
 		durable.BufferStart(ctx, fmt.Sprintf("item-%s", item.ID),
-			itemStub.ProcessItem, ItemState{ID: item.ID, Data: item.Data, ParentID: parentID})
+			itemStub.ProcessItem, ItemInput{ID: item.ID, Data: item.Data, ParentID: parentID})
 	}
 
-	collecting := CollectingState{Pending: len(state.Items)}
+	collecting := CollectingInput{Pending: len(input.Items)}
 	return durable.ReceiveSend(s.CollectResult, collecting), nil
 }
 
-func (s *FanoutService) CollectResult(ctx *durable.Context, state CollectingState, result ItemResult) (*durable.Continuation[FanoutResult], error) {
-	state.Results = append(state.Results, result)
-	state.Pending--
+func (s *FanoutService) CollectResult(ctx *durable.Context, input CollectingInput, externalInput ItemResult) (*durable.Continuation[FanoutResult], error) {
+	input.Results = append(input.Results, externalInput)
+	input.Pending--
 
-	if state.Pending > 0 {
-		return durable.ReceiveSend(s.CollectResult, state), nil
+	if input.Pending > 0 {
+		return durable.ReceiveSend(s.CollectResult, input), nil
 	}
 
 	// All children done.
-	fmt.Printf("collected %d results\n", len(state.Results))
-	for _, r := range state.Results {
+	fmt.Printf("collected %d results\n", len(input.Results))
+	for _, r := range input.Results {
 		fmt.Printf("  %s: %s\n", r.ID, r.Output)
 	}
-	return durable.Done(FanoutResult{Results: state.Results}), nil
+	return durable.Done(FanoutResult{Results: input.Results}), nil
 }
 
 // --- Item processor service ---
@@ -97,15 +97,15 @@ type ItemService struct {
 	// Injected dependencies would go here.
 }
 
-func (s *ItemService) ProcessItem(ctx *durable.Context, state ItemState) (*durable.Continuation[durable.Unit], error) {
+func (s *ItemService) ProcessItem(ctx *durable.Context, input ItemInput) (*durable.Continuation[durable.Unit], error) {
 	result := ItemResult{
-		ID:     state.ID,
-		Output: fmt.Sprintf("processed: %s", state.Data),
+		ID:     input.ID,
+		Output: fmt.Sprintf("processed: %s", input.Data),
 	}
 
 	// Send result back to the parent — like ch <- result.
 	var stub *FanoutService
-	durable.BufferSend(ctx, state.ParentID, stub.CollectResult, result)
+	durable.BufferSend(ctx, input.ParentID, stub.CollectResult, result)
 	return durable.Done(durable.Unit{}), nil
 }
 

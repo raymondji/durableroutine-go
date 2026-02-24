@@ -8,7 +8,7 @@ import (
 // WorkflowInput is the input to RoutineWorkflow.
 type WorkflowInput struct {
 	HandlerKey       string       `json:"handlerKey"`
-	State            json.RawMessage `json:"state"`
+	Input            json.RawMessage `json:"input"`
 	QueryResults     []QueryEntry `json:"queryResults,omitempty"`
 	MaxHistoryLength int32        `json:"maxHistoryLength,omitempty"`
 }
@@ -23,7 +23,7 @@ type QueryEntry struct {
 type ActivityInput struct {
 	HandlerKey string `json:"handlerKey"`
 	RoutineID  string `json:"routineID"`
-	State      json.RawMessage `json:"state"`
+	Input      json.RawMessage `json:"input"`
 	Message    json.RawMessage `json:"message,omitempty"`
 	Error      string `json:"error,omitempty"`
 }
@@ -50,23 +50,23 @@ type SerializedCase struct {
 	SendName      string         `json:"sendName,omitempty"`
 	CallName      string         `json:"callName,omitempty"`
 	Immediate     bool           `json:"immediate,omitempty"`
-	State         json.RawMessage `json:"state"`
+	Input         json.RawMessage `json:"input"`
 	HandlerKey    string          `json:"handlerKey"`
 }
 
 // StartEntry is a request to start a child routine.
 type StartEntry struct {
 	RoutineID  string `json:"routineID"`
-	StateKind  string `json:"stateKind"`
+	InputKind  string `json:"inputKind"`
 	ResultKind string `json:"resultKind"`
-	State      json.RawMessage `json:"state"`
+	Input      json.RawMessage `json:"input"`
 }
 
 // SendEntry is a request to send a message to another routine.
 type SendEntry struct {
-	RoutineID  string          `json:"routineID"`
-	StateKind  string          `json:"stateKind"`
-	MsgKind    string          `json:"msgKind"`
-	ResultKind string          `json:"resultKind"`
-	Msg        json.RawMessage `json:"msg"`
+	RoutineID        string          `json:"routineID"`
+	InputKind        string          `json:"inputKind"`
+	ExternalInputKind string         `json:"externalInputKind"`
+	ResultKind       string          `json:"resultKind"`
+	Msg              json.RawMessage `json:"msg"`
 }

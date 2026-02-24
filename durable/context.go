@@ -13,11 +13,11 @@ type Context struct {
 }
 
 type sendRequest struct {
-	routineID  string
-	stateKind  string
-	msgKind    string
-	resultKind string
-	msg        any
+	routineID        string
+	inputKind        string
+	externalInputKind string
+	resultKind       string
+	msg              any
 }
 
 type startRequest struct {
@@ -40,13 +40,13 @@ func (c *Context) RoutineID() string {
 // BufferStart requests that a child routine be started when the current handler
 // completes. The child runs as an independent durable routine (Temporal child
 // workflow). The handler parameter is used only for type inference of the result
-// type — it is not called. The state.DurableKind() and result DurableKind()
+// type — it is not called. The input.DurableKind() and result DurableKind()
 // determine which registered handler runs.
-func BufferStart[S Payload, T Payload](ctx *Context, routineID string, handler Handler[S, T], state S) {
+func BufferStart[I Payload, T Payload](ctx *Context, routineID string, handler Handler[I, T], input I) {
 	var zeroT T
 	ctx.startRequests = append(ctx.startRequests, startRequest{
 		routineID:  routineID,
-		state:      state,
+		state:      input,
 		resultKind: zeroT.DurableKind(),
 	})
 }
@@ -54,20 +54,20 @@ func BufferStart[S Payload, T Payload](ctx *Context, routineID string, handler H
 // BufferSend buffers a fire-and-forget message to another routine's inbox.
 // The message is delivered by the runtime after the current handler returns its
 // Continuation value, not immediately. The handler parameter is used only for type
-// inference of the target state type — it is not called. Pass the same function
+// inference of the target input type — it is not called. Pass the same function
 // registered with RegisterSendHandler, or use a nil stub for type inference when
 // the sender doesn't have access to the receiver's handler function.
 // Maps to a Temporal Signal.
-func BufferSend[S Payload, M Payload, T Payload](ctx *Context, routineID string,
-	handler SendHandler[S, M, T], msg M) {
-	var zeroS S
+func BufferSend[I Payload, E Payload, T Payload](ctx *Context, routineID string,
+	handler SendHandler[I, E, T], externalInput E) {
+	var zeroI I
 	var zeroT T
 	ctx.sendRequests = append(ctx.sendRequests, sendRequest{
-		routineID:  routineID,
-		stateKind:  zeroS.DurableKind(),
-		msgKind:    msg.DurableKind(),
-		resultKind: zeroT.DurableKind(),
-		msg:        msg,
+		routineID:        routineID,
+		inputKind:        zeroI.DurableKind(),
+		externalInputKind: externalInput.DurableKind(),
+		resultKind:       zeroT.DurableKind(),
+		msg:              externalInput,
 	})
 }
 
@@ -90,7 +90,7 @@ func (c *Context) QueryResults() []QueryEntry {
 func (c *Context) StartRequests() []StartEntry {
 	out := make([]StartEntry, len(c.startRequests))
 	for i, e := range c.startRequests {
-		out[i] = StartEntry{RoutineID: e.routineID, StateKind: e.state.DurableKind(), ResultKind: e.resultKind, State: e.state}
+		out[i] = StartEntry{RoutineID: e.routineID, InputKind: e.state.DurableKind(), ResultKind: e.resultKind, Input: e.state}
 	}
 	return out
 }
@@ -100,11 +100,11 @@ func (c *Context) SendRequests() []SendEntry {
 	out := make([]SendEntry, len(c.sendRequests))
 	for i, e := range c.sendRequests {
 		out[i] = SendEntry{
-			RoutineID:  e.routineID,
-			StateKind:  e.stateKind,
-			MsgKind:    e.msgKind,
-			ResultKind: e.resultKind,
-			Msg:        e.msg,
+			RoutineID:        e.routineID,
+			InputKind:        e.inputKind,
+			ExternalInputKind: e.externalInputKind,
+			ResultKind:       e.resultKind,
+			Msg:              e.msg,
 		}
 	}
 	return out
@@ -119,18 +119,18 @@ type QueryEntry struct {
 // StartEntry is the exported view of a start request.
 type StartEntry struct {
 	RoutineID  string
-	StateKind  string
+	InputKind  string
 	ResultKind string
-	State      any
+	Input      any
 }
 
 // SendEntry is the exported view of a send request.
 type SendEntry struct {
-	RoutineID  string
-	StateKind  string
-	MsgKind    string
-	ResultKind string
-	Msg        any
+	RoutineID        string
+	InputKind        string
+	ExternalInputKind string
+	ResultKind       string
+	Msg              any
 }
 
 // SetQueryResult stores a static query result that persists across state
