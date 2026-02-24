@@ -39,15 +39,15 @@ func uniqueID(prefix string) string {
 
 type InitialState struct{ Email string }
 
-func (InitialState) Kind() string { return "reminder.initial" }
+func (InitialState) DurableKind() string { return "reminder.initial" }
 
 type FollowUpState struct{ Email string }
 
-func (FollowUpState) Kind() string { return "reminder.follow-up" }
+func (FollowUpState) DurableKind() string { return "reminder.follow-up" }
 
 type FinalState struct{ Email string }
 
-func (FinalState) Kind() string { return "reminder.final" }
+func (FinalState) DurableKind() string { return "reminder.final" }
 
 type reminderService struct {
 	sent []string
@@ -115,9 +115,11 @@ func TestReminderEndToEnd(t *testing.T) {
 
 type SimpleState struct{ Value string }
 
-func (SimpleState) Kind() string { return "simple" }
+func (SimpleState) DurableKind() string { return "simple" }
 
 type SimpleResult struct{ Output string }
+
+func (SimpleResult) DurableKind() string { return "simple-result" }
 
 func simpleHandler(ctx *durable.Context, state SimpleState) (*durable.Continuation[SimpleResult], error) {
 	return durable.Done(SimpleResult{Output: "got:" + state.Value}), nil
@@ -166,13 +168,15 @@ func TestSimpleDone(t *testing.T) {
 
 type QueryState struct{ Counter int }
 
-func (QueryState) Kind() string { return "query-test" }
+func (QueryState) DurableKind() string { return "query-test" }
 
 type StatusResp struct{ Count int }
 
-func (StatusResp) Kind() string { return "status" }
+func (StatusResp) DurableKind() string { return "status" }
 
 type QueryResult struct{ FinalCount int }
+
+func (QueryResult) DurableKind() string { return "query-result" }
 
 func queryHandler(ctx *durable.Context, state QueryState) (*durable.Continuation[QueryResult], error) {
 	durable.SetQueryResult(ctx, StatusResp{Count: state.Counter})
@@ -224,20 +228,22 @@ func TestQueryResult(t *testing.T) {
 
 type WaitingState struct{ Name string }
 
-func (WaitingState) Kind() string { return "waiting" }
+func (WaitingState) DurableKind() string { return "waiting" }
 
 type GotMessageState struct {
 	Name    string
 	Message string
 }
 
-func (GotMessageState) Kind() string { return "got-message" }
+func (GotMessageState) DurableKind() string { return "got-message" }
 
 type MyMsg struct{ Text string }
 
-func (MyMsg) Kind() string { return "my-msg" }
+func (MyMsg) DurableKind() string { return "my-msg" }
 
 type SendResult struct{ ReceivedText string }
+
+func (SendResult) DurableKind() string { return "send-result" }
 
 type sendService struct{}
 
@@ -303,34 +309,38 @@ func TestSendSignal(t *testing.T) {
 
 type CANCountState struct{ Counter int }
 
-func (CANCountState) Kind() string { return "can-count" }
+func (CANCountState) DurableKind() string { return "can-count" }
 
 type CANWaitState struct {
 	Counter int
 	MsgText string
 }
 
-func (CANWaitState) Kind() string { return "can-wait" }
+func (CANWaitState) DurableKind() string { return "can-wait" }
 
 type CANStatusResp struct{ Count int }
 
-func (CANStatusResp) Kind() string { return "can-status" }
+func (CANStatusResp) DurableKind() string { return "can-status" }
 
 type CANMsg struct{ Text string }
 
-func (CANMsg) Kind() string { return "can-msg" }
+func (CANMsg) DurableKind() string { return "can-msg" }
 
 type CANCallReq struct{ Text string }
 
-func (CANCallReq) Kind() string { return "can-call" }
+func (CANCallReq) DurableKind() string { return "can-call" }
 
 type CANCallResp struct{ Echo string }
+
+func (CANCallResp) DurableKind() string { return "can-call-resp" }
 
 type CANResult struct {
 	FinalCount int
 	MsgText    string
 	CallEcho   string
 }
+
+func (CANResult) DurableKind() string { return "can-result" }
 
 type canService struct{}
 

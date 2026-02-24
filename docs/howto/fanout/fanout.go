@@ -19,7 +19,7 @@ type ItemState struct {
 	ParentID string
 }
 
-func (ItemState) Kind() string { return "process-item" }
+func (ItemState) DurableKind() string { return "process-item" }
 
 // --- Messages ---
 
@@ -28,7 +28,7 @@ type ItemResult struct {
 	Output string
 }
 
-func (ItemResult) Kind() string { return "results" }
+func (ItemResult) DurableKind() string { return "results" }
 
 // --- Parent routine ---
 
@@ -39,7 +39,7 @@ type FanoutState struct {
 	}
 }
 
-func (FanoutState) Kind() string { return "fanout" }
+func (FanoutState) DurableKind() string { return "fanout" }
 
 // --- Results ---
 
@@ -47,12 +47,14 @@ type FanoutResult struct {
 	Results []ItemResult
 }
 
+func (FanoutResult) DurableKind() string { return "fanout-result" }
+
 type CollectingState struct {
 	Pending int
 	Results []ItemResult
 }
 
-func (CollectingState) Kind() string { return "fanout.collecting" }
+func (CollectingState) DurableKind() string { return "fanout.collecting" }
 
 // --- Service struct ---
 
@@ -63,9 +65,10 @@ type FanoutService struct {
 func (s *FanoutService) StartItems(ctx *durable.Context, state FanoutState) (*durable.Continuation[FanoutResult], error) {
 	parentID := ctx.RoutineID()
 
+	var itemStub *ItemService
 	for _, item := range state.Items {
-		ctx.BufferStart(fmt.Sprintf("item-%s", item.ID),
-			ItemState{ID: item.ID, Data: item.Data, ParentID: parentID})
+		durable.BufferStart(ctx, fmt.Sprintf("item-%s", item.ID),
+			itemStub.ProcessItem, ItemState{ID: item.ID, Data: item.Data, ParentID: parentID})
 	}
 
 	collecting := CollectingState{Pending: len(state.Items)}

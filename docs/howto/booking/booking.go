@@ -22,7 +22,7 @@ type BookingState struct {
 	ItemID string
 }
 
-func (BookingState) Kind() string { return "booking" }
+func (BookingState) DurableKind() string { return "booking" }
 
 // --- Messages ---
 
@@ -31,7 +31,7 @@ type PaymentInfo struct {
 	Expiry     string
 }
 
-func (PaymentInfo) Kind() string { return "payment" }
+func (PaymentInfo) DurableKind() string { return "payment" }
 
 type ShippingInfo struct {
 	Address string
@@ -39,26 +39,30 @@ type ShippingInfo struct {
 	Zip     string
 }
 
-func (ShippingInfo) Kind() string { return "shipping" }
+func (ShippingInfo) DurableKind() string { return "shipping" }
 
 type CancelReq struct{ Reason string }
 
-func (CancelReq) Kind() string { return "cancel" }
+func (CancelReq) DurableKind() string { return "cancel" }
 
 type CancelResp struct{ Confirmed bool }
+
+func (CancelResp) DurableKind() string { return "cancel-resp" }
 
 type StatusResp struct {
 	Status    string
 	PaymentID string
 }
 
-func (StatusResp) Kind() string { return "get-status" }
+func (StatusResp) DurableKind() string { return "get-status" }
 
 // --- Result ---
 
 type BookingResult struct {
 	Status string
 }
+
+func (BookingResult) DurableKind() string { return "booking-result" }
 
 // --- Per-step state types ---
 
@@ -67,7 +71,7 @@ type ReservedState struct {
 	ItemID string
 }
 
-func (ReservedState) Kind() string { return "booking.reserved" }
+func (ReservedState) DurableKind() string { return "booking.reserved" }
 
 type PaidState struct {
 	UserID    string
@@ -75,7 +79,7 @@ type PaidState struct {
 	PaymentID string
 }
 
-func (PaidState) Kind() string { return "booking.paid" }
+func (PaidState) DurableKind() string { return "booking.paid" }
 
 // --- Service struct ---
 

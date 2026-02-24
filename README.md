@@ -133,5 +133,5 @@ Follow the [Quick Start](docs/tutorials/QUICK_START.md) to build your first dura
 - **[Elixir GenServer](https://hexdocs.pm/elixir/GenServer.html)** — actor model semantics; the handler-returns-continuation loop mirrors GenServer callbacks
 - **Go goroutines & channels** — the native primitives this library tries to stay close to in spirit
 - **[Continuation-passing style](https://en.wikipedia.org/wiki/Continuation-passing_style)** — functions that return an explicit Continuation (the remaining work), making control flow explicit
-- **[River](https://riverqueue.com/)** — type-safe registration via self-identifying `Kind()` types
+- **[River](https://riverqueue.com/)** — type-safe registration via self-identifying `DurableKind()` types
 - **[iWF](https://github.com/indeedeng/iwf)** — similar goal of moving user code out of the replay-safe workflow function

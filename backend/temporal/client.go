@@ -31,7 +31,7 @@ func NewClient(tc temporalclient.Client, taskQueue string) *Client {
 	return &Client{temporal: tc, taskQueue: taskQueue}
 }
 
-func (c *Client) Go(ctx context.Context, id string, kind string, state any) error {
+func (c *Client) Go(ctx context.Context, id string, kind string, resultKind string, state any) error {
 	stateBytes, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("marshal state: %w", err)
@@ -42,7 +42,7 @@ func (c *Client) Go(ctx context.Context, id string, kind string, state any) erro
 		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
 	}
 	input := WorkflowInput{
-		HandlerKey:       durablecore.HandlerKey(kind),
+		HandlerKey:       durablecore.HandlerKey(kind, resultKind),
 		State:            stateBytes,
 		MaxHistoryLength: c.MaxHistoryLength,
 	}
@@ -51,13 +51,13 @@ func (c *Client) Go(ctx context.Context, id string, kind string, state any) erro
 	return err
 }
 
-func (c *Client) Send(ctx context.Context, id string, stateKind string, msgKind string, msg any) error {
-	signalName := durablecore.SendKey(stateKind, msgKind)
+func (c *Client) Send(ctx context.Context, id string, stateKind string, msgKind string, resultKind string, msg any) error {
+	signalName := durablecore.SendKey(stateKind, msgKind, resultKind)
 	return c.temporal.SignalWorkflow(ctx, id, "", signalName, msg)
 }
 
-func (c *Client) Call(ctx context.Context, id string, stateKind string, reqKind string, req any) (any, error) {
-	updateName := durablecore.CallKey(stateKind, reqKind)
+func (c *Client) Call(ctx context.Context, id string, stateKind string, reqKind string, respKind string, resultKind string, req any) (any, error) {
+	updateName := durablecore.CallKey(stateKind, reqKind, respKind, resultKind)
 	handle, err := c.temporal.UpdateWorkflow(ctx, temporalclient.UpdateWorkflowOptions{
 		WorkflowID:   id,
 		UpdateName:   updateName,

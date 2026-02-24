@@ -17,11 +17,11 @@ type Item struct {
 	Data string
 }
 
-func (Item) Kind() string { return "items" }
+func (Item) DurableKind() string { return "items" }
 
 type DoneMsg struct{}
 
-func (DoneMsg) Kind() string { return "done" }
+func (DoneMsg) DurableKind() string { return "done" }
 
 // --- State ---
 
@@ -30,20 +30,22 @@ type ProducerState struct {
 	ConsumerRoutineID string
 }
 
-func (ProducerState) Kind() string { return "producer" }
+func (ProducerState) DurableKind() string { return "producer" }
 
 type ConsumerState struct {
 	Name     string
 	Received []Item
 }
 
-func (ConsumerState) Kind() string { return "consumer" }
+func (ConsumerState) DurableKind() string { return "consumer" }
 
 // --- Results ---
 
 type ConsumerResult struct {
 	Received []Item
 }
+
+func (ConsumerResult) DurableKind() string { return "consumer-result" }
 
 // --- Producer service ---
 

@@ -8,12 +8,12 @@ import (
 
 // Continuation describes what a routine should wait for before invoking the next
 // handler. T is the routine's result type, returned via Done and retrieved
-// via ClientGet. It is an opaque value built via Done, After, Select, etc.
+// via Get. It is an opaque value built via Done, After, Select, etc.
 //
 // Every constructor (After, ReceiveSend, ReceiveCall, Default) returns a
 // *Continuation[T] that works standalone. To wait on multiple conditions, pass
 // them to Select which merges their cases.
-type Continuation[T any] struct {
+type Continuation[T Payload] struct {
 	done   bool
 	result T
 	cases  []Case
@@ -22,9 +22,11 @@ type Continuation[T any] struct {
 // Unit is a convenience type for routines that don't produce a result.
 type Unit struct{}
 
+func (Unit) DurableKind() string { return "unit" }
+
 // Done returns a Continuation that completes the routine with the given result.
-// Clients can retrieve the result via ClientGet.
-func Done[T any](result T) *Continuation[T] {
+// Clients can retrieve the result via Get.
+func Done[T Payload](result T) *Continuation[T] {
 	return &Continuation[T]{done: true, result: result}
 }
 
@@ -48,47 +50,51 @@ type Case struct {
 	state any
 
 	// handlerKey is the composite key for looking up the registered handler
-	// (e.g., "send:booking.reserved:payment"). Set by constructors for
+	// (e.g., "send:booking.reserved:payment:booking-result"). Set by constructors for
 	// non-query cases.
 	handlerKey string
 }
 
 // After returns a Continuation that fires after the given duration. Use standalone
 // as a simple "sleep then continue", or pass to Select alongside other Continuations.
-func After[S HandlerState, T any](d time.Duration, handler HandlerFunc[S, T], state S) *Continuation[T] {
+func After[S Payload, T Payload](d time.Duration, handler Handler[S, T], state S) *Continuation[T] {
+	var zeroT T
 	return &Continuation[T]{
 		cases: []Case{{
 			timerDuration: &d,
 			state:         state,
-			handlerKey:    durablecore.HandlerKey(state.Kind()),
+			handlerKey:    durablecore.HandlerKey(state.DurableKind(), zeroT.DurableKind()),
 		}},
 	}
 }
 
 // ReceiveSend returns a Continuation that fires when a message arrives on the inbox
-// identified by M.Kind(). Use standalone to wait for a single message, or pass
+// identified by M.DurableKind(). Use standalone to wait for a single message, or pass
 // to Select alongside other Continuations. Maps to a Temporal Signal handler.
-func ReceiveSend[S HandlerState, M Message, T any](handler SendFunc[S, M, T], state S) *Continuation[T] {
+func ReceiveSend[S Payload, M Payload, T Payload](handler SendHandler[S, M, T], state S) *Continuation[T] {
 	var zeroM M
+	var zeroT T
 	return &Continuation[T]{
 		cases: []Case{{
-			sendName:   zeroM.Kind(),
+			sendName:   zeroM.DurableKind(),
 			state:      state,
-			handlerKey: durablecore.SendKey(state.Kind(), zeroM.Kind()),
+			handlerKey: durablecore.SendKey(state.DurableKind(), zeroM.DurableKind(), zeroT.DurableKind()),
 		}},
 	}
 }
 
 // ReceiveCall returns a Continuation that fires when a client calls the method identified
-// by Req.Kind(). Use standalone to wait for a single call, or pass to Select
+// by Req.DurableKind(). Use standalone to wait for a single call, or pass to Select
 // alongside other Continuations. Maps to a Temporal Update handler.
-func ReceiveCall[S HandlerState, Req Message, Resp any, T any](handler CallFunc[S, Req, Resp, T], state S) *Continuation[T] {
+func ReceiveCall[S Payload, Req Payload, Resp Payload, T Payload](handler CallHandler[S, Req, Resp, T], state S) *Continuation[T] {
 	var zeroReq Req
+	var zeroResp Resp
+	var zeroT T
 	return &Continuation[T]{
 		cases: []Case{{
-			callName:   zeroReq.Kind(),
+			callName:   zeroReq.DurableKind(),
 			state:      state,
-			handlerKey: durablecore.CallKey(state.Kind(), zeroReq.Kind()),
+			handlerKey: durablecore.CallKey(state.DurableKind(), zeroReq.DurableKind(), zeroResp.DurableKind(), zeroT.DurableKind()),
 		}},
 	}
 }
@@ -101,7 +107,7 @@ func ReceiveCall[S HandlerState, Req Message, Resp any, T any](handler CallFunc[
 // 2. Calls (caller is waiting for a response)
 // 3. Sends
 // 4. Default (if present, runs if no other cases are ready)
-func Select[T any](conts ...*Continuation[T]) *Continuation[T] {
+func Select[T Payload](conts ...*Continuation[T]) *Continuation[T] {
 	var cases []Case
 	for _, c := range conts {
 		cases = append(cases, c.cases...)
@@ -113,12 +119,13 @@ func Select[T any](conts ...*Continuation[T]) *Continuation[T] {
 // and immediately invokes the handler as the next activity, without waiting for
 // a timer, inbox, or method. Use this for multi-step processing where you want
 // explicit continue-as-new boundaries between steps.
-func Continue[S HandlerState, T any](handler HandlerFunc[S, T], state S) *Continuation[T] {
+func Continue[S Payload, T Payload](handler Handler[S, T], state S) *Continuation[T] {
+	var zeroT T
 	return &Continuation[T]{
 		cases: []Case{{
 			immediate:  true,
 			state:      state,
-			handlerKey: durablecore.HandlerKey(state.Kind()),
+			handlerKey: durablecore.HandlerKey(state.DurableKind(), zeroT.DurableKind()),
 		}},
 	}
 }
@@ -127,12 +134,13 @@ func Continue[S HandlerState, T any](handler HandlerFunc[S, T], state S) *Contin
 // Select are ready. Maps to Temporal's sel.AddDefault(). Use this to drain
 // buffered sends: if no sends are pending, the default case fires.
 // Must be used inside Select alongside other Continuations.
-func Default[S HandlerState, T any](handler HandlerFunc[S, T], state S) *Continuation[T] {
+func Default[S Payload, T Payload](handler Handler[S, T], state S) *Continuation[T] {
+	var zeroT T
 	return &Continuation[T]{
 		cases: []Case{{
 			immediate:  true,
 			state:      state,
-			handlerKey: durablecore.HandlerKey(state.Kind()),
+			handlerKey: durablecore.HandlerKey(state.DurableKind(), zeroT.DurableKind()),
 		}},
 	}
 }

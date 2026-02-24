@@ -14,7 +14,7 @@ import (
 
 type OrderState struct{}
 
-func (OrderState) Kind() string { return "order" }
+func (OrderState) DurableKind() string { return "order" }
 
 // --- Messages ---
 
@@ -25,20 +25,20 @@ type PlaceOrderReq struct {
 	Total         float64
 }
 
-func (PlaceOrderReq) Kind() string { return "place" }
+func (PlaceOrderReq) DurableKind() string { return "place" }
 
 type CancelOrderReq struct {
 	Reason string
 }
 
-func (CancelOrderReq) Kind() string { return "cancel" }
+func (CancelOrderReq) DurableKind() string { return "cancel" }
 
 type StatusResp struct {
 	Status  string
 	OrderID string
 }
 
-func (StatusResp) Kind() string { return "get-order-status" }
+func (StatusResp) DurableKind() string { return "get-order-status" }
 
 // --- Result ---
 
@@ -47,18 +47,20 @@ type OrderResult struct {
 	OrderID string
 }
 
+func (OrderResult) DurableKind() string { return "order-result" }
+
 // --- Per-step state types ---
 
 type PendingState struct{}
 
-func (PendingState) Kind() string { return "order.pending" }
+func (PendingState) DurableKind() string { return "order.pending" }
 
 type PlacedState struct {
 	OrderID string
 	Items   []string
 }
 
-func (PlacedState) Kind() string { return "order.placed" }
+func (PlacedState) DurableKind() string { return "order.placed" }
 
 // --- Service struct ---
 

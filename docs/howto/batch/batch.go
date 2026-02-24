@@ -18,7 +18,7 @@ type BatchState struct {
 	Items []string
 }
 
-func (BatchState) Kind() string { return "batch" }
+func (BatchState) DurableKind() string { return "batch" }
 
 // --- Messages ---
 
@@ -26,7 +26,7 @@ type CancelMsg struct {
 	Reason string
 }
 
-func (CancelMsg) Kind() string { return "cancel" }
+func (CancelMsg) DurableKind() string { return "cancel" }
 
 // --- Result ---
 
@@ -35,6 +35,8 @@ type BatchResult struct {
 	Errors    int
 	Cancelled bool
 }
+
+func (BatchResult) DurableKind() string { return "batch-result" }
 
 // --- Per-step state types ---
 
@@ -45,7 +47,7 @@ type ProcessingState struct {
 	Errors    int
 }
 
-func (ProcessingState) Kind() string { return "batch.processing" }
+func (ProcessingState) DurableKind() string { return "batch.processing" }
 
 // --- Service struct ---
 

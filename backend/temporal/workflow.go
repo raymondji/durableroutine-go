@@ -116,7 +116,7 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 				ParentClosePolicy: enumspb.PARENT_CLOSE_POLICY_ABANDON,
 			})
 			childInput := WorkflowInput{
-				HandlerKey: durablecore.HandlerKey(start.StateKind),
+				HandlerKey: durablecore.HandlerKey(start.StateKind, start.ResultKind),
 				State:      start.State,
 			}
 			workflow.ExecuteChildWorkflow(childCtx, wh.RoutineWorkflow, childInput)
@@ -124,7 +124,7 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 
 		// 4. Handle send requests — wait for each signal to be acknowledged.
 		for _, sr := range output.SendRequests {
-			signalName := durablecore.SendKey(sr.StateKind, sr.MsgKind)
+			signalName := durablecore.SendKey(sr.StateKind, sr.MsgKind, sr.ResultKind)
 			f := workflow.SignalExternalWorkflow(ctx, sr.RoutineID, "", signalName, sr.Msg)
 			if err := f.Get(ctx, nil); err != nil {
 				// Signal delivery failed (e.g., target workflow not found).
@@ -158,7 +158,7 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 				continue
 			}
 			c := c
-			// Use HandlerKey as the update name — matches the client's "call:{stateKind}:{reqKind}".
+			// Use HandlerKey as the update name — matches the client's "call:{stateKind}:{reqKind}:{respKind}:{resultKind}".
 			workflow.SetUpdateHandler(ctx, c.HandlerKey,
 				func(ctx workflow.Context, req json.RawMessage) (any, error) {
 					responseCh := workflow.NewChannel(ctx)

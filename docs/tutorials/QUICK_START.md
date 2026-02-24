@@ -33,16 +33,16 @@ import (
 	"github.com/raymondji/durableroutine-go/durable"
 )
 
-// Each state type implements durable.HandlerState via Kind().
+// Each state type implements durable.Payload via DurableKind().
 
 type InitialState struct{ Email string }
-func (InitialState) Kind() string { return "reminder.initial" }
+func (InitialState) DurableKind() string { return "reminder.initial" }
 
 type FollowUpState struct{ Email string }
-func (FollowUpState) Kind() string { return "reminder.follow-up" }
+func (FollowUpState) DurableKind() string { return "reminder.follow-up" }
 
 type FinalState struct{ Email string }
-func (FinalState) Kind() string { return "reminder.final" }
+func (FinalState) DurableKind() string { return "reminder.final" }
 ```
 
 ## Step 3: Write handlers

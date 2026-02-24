@@ -25,7 +25,7 @@ type TripState struct {
 	CarRentalID string
 }
 
-func (TripState) Kind() string { return "trip-booking" }
+func (TripState) DurableKind() string { return "trip-booking" }
 
 type FlightBookedState struct {
 	TripID             string
@@ -34,7 +34,7 @@ type FlightBookedState struct {
 	FlightConfirmation string
 }
 
-func (FlightBookedState) Kind() string { return "trip.flight-booked" }
+func (FlightBookedState) DurableKind() string { return "trip.flight-booked" }
 
 type HotelBookedState struct {
 	TripID             string
@@ -43,7 +43,7 @@ type HotelBookedState struct {
 	HotelConfirmation  string
 }
 
-func (HotelBookedState) Kind() string { return "trip.hotel-booked" }
+func (HotelBookedState) DurableKind() string { return "trip.hotel-booked" }
 
 // --- Result ---
 
@@ -52,6 +52,8 @@ type TripResult struct {
 	HotelConfirmation  string
 	CarConfirmation    string
 }
+
+func (TripResult) DurableKind() string { return "trip-result" }
 
 // --- Service struct ---
 

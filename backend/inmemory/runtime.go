@@ -71,7 +71,7 @@ func (r *Runtime) Client() durable.Client {
 }
 
 // start creates a new instance and launches its goroutine. Caller must NOT hold r.mu.
-func (r *Runtime) start(id string, kind string, state any) error {
+func (r *Runtime) start(id string, kind string, resultKind string, state any) error {
 	r.mu.Lock()
 	if _, exists := r.instances[id]; exists {
 		r.mu.Unlock()
@@ -88,7 +88,7 @@ func (r *Runtime) start(id string, kind string, state any) error {
 	r.instances[id] = inst
 	r.mu.Unlock()
 
-	handlerKey := durablecore.HandlerKey(kind)
+	handlerKey := durablecore.HandlerKey(kind, resultKind)
 	go r.runInstance(inst, handlerKey, state, nil)
 	return nil
 }
@@ -205,12 +205,12 @@ func (r *Runtime) applyContextEffects(inst *instance, sctx *durable.Context) {
 
 	// Start child routines.
 	for _, sr := range sctx.StartRequests() {
-		r.start(sr.RoutineID, sr.StateKind, sr.State)
+		r.start(sr.RoutineID, sr.StateKind, sr.ResultKind, sr.State)
 	}
 
 	// Send messages to other instances.
 	for _, sr := range sctx.SendRequests() {
-		sendKey := durablecore.SendKey(sr.StateKind, sr.MsgKind)
+		sendKey := durablecore.SendKey(sr.StateKind, sr.MsgKind, sr.ResultKind)
 		r.mu.Lock()
 		target, ok := r.instances[sr.RoutineID]
 		r.mu.Unlock()

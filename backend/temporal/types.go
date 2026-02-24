@@ -56,15 +56,17 @@ type SerializedCase struct {
 
 // StartEntry is a request to start a child routine.
 type StartEntry struct {
-	RoutineID string `json:"routineID"`
-	StateKind string `json:"stateKind"`
-	State     json.RawMessage `json:"state"`
+	RoutineID  string `json:"routineID"`
+	StateKind  string `json:"stateKind"`
+	ResultKind string `json:"resultKind"`
+	State      json.RawMessage `json:"state"`
 }
 
 // SendEntry is a request to send a message to another routine.
 type SendEntry struct {
-	RoutineID string          `json:"routineID"`
-	StateKind string          `json:"stateKind"`
-	MsgKind   string          `json:"msgKind"`
-	Msg       json.RawMessage `json:"msg"`
+	RoutineID  string          `json:"routineID"`
+	StateKind  string          `json:"stateKind"`
+	MsgKind    string          `json:"msgKind"`
+	ResultKind string          `json:"resultKind"`
+	Msg        json.RawMessage `json:"msg"`
 }

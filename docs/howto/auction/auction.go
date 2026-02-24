@@ -23,7 +23,7 @@ type AuctionState struct {
 	Duration    time.Duration
 }
 
-func (AuctionState) Kind() string { return "auction" }
+func (AuctionState) DurableKind() string { return "auction" }
 
 // --- Messages ---
 
@@ -32,13 +32,15 @@ type PlaceBidReq struct {
 	Amount   float64
 }
 
-func (PlaceBidReq) Kind() string { return "place-bid" }
+func (PlaceBidReq) DurableKind() string { return "place-bid" }
 
 type PlaceBidResp struct {
 	Accepted   bool
 	HighestBid float64
 	Message    string
 }
+
+func (PlaceBidResp) DurableKind() string { return "place-bid-resp" }
 
 type AuctionStatusResp struct {
 	ItemName   string
@@ -47,7 +49,7 @@ type AuctionStatusResp struct {
 	BidCount   int
 }
 
-func (AuctionStatusResp) Kind() string { return "auction-status" }
+func (AuctionStatusResp) DurableKind() string { return "auction-status" }
 
 // --- Result ---
 
@@ -57,6 +59,8 @@ type AuctionResult struct {
 	Amount   float64
 	BidCount int
 }
+
+func (AuctionResult) DurableKind() string { return "auction-result" }
 
 // --- Per-step state types ---
 
@@ -68,7 +72,7 @@ type BiddingState struct {
 	BidCount   int
 }
 
-func (BiddingState) Kind() string { return "auction.bidding" }
+func (BiddingState) DurableKind() string { return "auction.bidding" }
 
 // --- Service struct ---
 

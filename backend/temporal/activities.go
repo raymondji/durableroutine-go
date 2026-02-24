@@ -76,9 +76,10 @@ func (a *handlerActivity) RunHandler(ctx context.Context, input ActivityInput) (
 			return ActivityOutput{}, fmt.Errorf("marshal start state: %w", err)
 		}
 		output.StartRequests = append(output.StartRequests, StartEntry{
-			RoutineID: sr.RoutineID,
-			StateKind: sr.StateKind,
-			State:     stateBytes,
+			RoutineID:  sr.RoutineID,
+			StateKind:  sr.StateKind,
+			ResultKind: sr.ResultKind,
+			State:      stateBytes,
 		})
 	}
 	for _, sr := range sctx.SendRequests() {
@@ -87,10 +88,11 @@ func (a *handlerActivity) RunHandler(ctx context.Context, input ActivityInput) (
 			return ActivityOutput{}, fmt.Errorf("marshal send msg: %w", err)
 		}
 		output.SendRequests = append(output.SendRequests, SendEntry{
-			RoutineID: sr.RoutineID,
-			StateKind: sr.StateKind,
-			MsgKind:   sr.MsgKind,
-			Msg:       msgBytes,
+			RoutineID:  sr.RoutineID,
+			StateKind:  sr.StateKind,
+			MsgKind:    sr.MsgKind,
+			ResultKind: sr.ResultKind,
+			Msg:        msgBytes,
 		})
 	}
 

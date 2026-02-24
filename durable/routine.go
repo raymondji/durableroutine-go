@@ -12,33 +12,25 @@ import (
 	"github.com/raymondji/durableroutine-go/internal/durablecore"
 )
 
-// HandlerState is the interface that all handler state types must implement.
-// Kind returns a stable string identifier used for handler lookup and
-// serialization across continue-as-new boundaries.
-type HandlerState interface {
-	Kind() string
-}
-
-// Message is the interface that all message and request types must implement.
-// Kind returns a stable string used as the Temporal signal/update/query name
-// and as part of the handler registration key. This decouples routing from
-// Go type names.
-type Message interface {
-	Kind() string
+// Payload is the interface that all handler input, message, result, and query
+// response types must implement. DurableKind returns a stable string identifier
+// used for handler lookup and serialization across continue-as-new boundaries.
+type Payload interface {
+	DurableKind() string
 }
 
 // --- Handler function signatures ---
 
-// HandlerFunc is a function that receives state and returns a Continuation
+// Handler is a function that receives state and returns a Continuation
 // describing what the routine should wait for next.
 // Return Done(result) to complete the routine.
-type HandlerFunc[State HandlerState, Result any] func(ctx *Context, state State) (*Continuation[Result], error)
+type Handler[State Payload, Result Payload] func(ctx *Context, state State) (*Continuation[Result], error)
 
-// SendFunc handles a fire-and-forget message (Signal).
-type SendFunc[State HandlerState, M Message, Result any] func(ctx *Context, state State, msg M) (*Continuation[Result], error)
+// SendHandler handles a fire-and-forget message (Signal).
+type SendHandler[State Payload, M Payload, Result Payload] func(ctx *Context, state State, msg M) (*Continuation[Result], error)
 
-// CallFunc handles a synchronous request-response (Update).
-type CallFunc[State HandlerState, Req Message, Resp any, Result any] func(ctx *Context, state State, req Req) (Resp, *Continuation[Result], error)
+// CallHandler handles a synchronous request-response (Update).
+type CallHandler[State Payload, Req Payload, Resp Payload, Result Payload] func(ctx *Context, state State, req Req) (Resp, *Continuation[Result], error)
 
 // --- Terminal error handler function signatures ---
 //
@@ -47,14 +39,14 @@ type CallFunc[State HandlerState, Req Message, Resp any, Result any] func(ctx *C
 // handler plus the final error, and can compensate, transition to a different
 // state, or fail the routine.
 
-// TerminalErrorFunc handles terminal errors for a HandlerFunc.
-type TerminalErrorFunc[State HandlerState, Result any] func(ctx *Context, state State, err error) (*Continuation[Result], error)
+// TerminalErrorHandler handles terminal errors for a Handler.
+type TerminalErrorHandler[State Payload, Result Payload] func(ctx *Context, state State, err error) (*Continuation[Result], error)
 
-// SendTerminalErrorFunc handles terminal errors for a SendFunc.
-type SendTerminalErrorFunc[State HandlerState, M Message, Result any] func(ctx *Context, state State, msg M, err error) (*Continuation[Result], error)
+// SendTerminalErrorHandler handles terminal errors for a SendHandler.
+type SendTerminalErrorHandler[State Payload, M Payload, Result Payload] func(ctx *Context, state State, msg M, err error) (*Continuation[Result], error)
 
-// CallTerminalErrorFunc handles terminal errors for a CallFunc.
-type CallTerminalErrorFunc[State HandlerState, Req Message, Resp any, Result any] func(ctx *Context, state State, req Req, err error) (Resp, *Continuation[Result], error)
+// CallTerminalErrorHandler handles terminal errors for a CallHandler.
+type CallTerminalErrorHandler[State Payload, Req Payload, Resp Payload, Result Payload] func(ctx *Context, state State, req Req, err error) (Resp, *Continuation[Result], error)
 
 // --- Runner types ---
 
@@ -72,7 +64,7 @@ type RunOutput struct {
 }
 
 // buildRunOutput extracts the fields from a generic *Continuation[T] into a RunOutput.
-func buildRunOutput[T any](cont *Continuation[T], key string) (*RunOutput, error) {
+func buildRunOutput[T Payload](cont *Continuation[T], key string) (*RunOutput, error) {
 	if cont == nil {
 		return nil, fmt.Errorf("handler %s returned nil Continuation with nil error — must always return a Continuation when there is no error", key)
 	}
@@ -116,8 +108,8 @@ func registerTerminalError(w *Worker, primaryKey string, teHandler any, runner H
 
 // --- Registration types with WithTerminalErrorHandler builder methods ---
 
-// handlerReg is returned by AddHandler to allow chaining .WithTerminalErrorHandler().
-type handlerReg[S HandlerState, T any] struct {
+// handlerReg is returned by RegisterHandler to allow chaining .WithTerminalErrorHandler().
+type handlerReg[S Payload, T Payload] struct {
 	w   *Worker
 	key string
 }
@@ -126,7 +118,7 @@ type handlerReg[S HandlerState, T any] struct {
 // after all retries in the RetryPolicy are exhausted, instead of failing
 // the routine. The terminal error handler must have the same State and
 // Result types as the main handler.
-func (r handlerReg[S, T]) WithTerminalErrorHandler(te TerminalErrorFunc[S, T], opts HandlerOptions) {
+func (r handlerReg[S, T]) WithTerminalErrorHandler(te TerminalErrorHandler[S, T], opts HandlerOptions) {
 	runner := func(ctx *Context, rawState json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
 		var state S
 		if err := json.Unmarshal(rawState, &state); err != nil {
@@ -141,8 +133,8 @@ func (r handlerReg[S, T]) WithTerminalErrorHandler(te TerminalErrorFunc[S, T], o
 	registerTerminalError(r.w, r.key, te, runner, opts)
 }
 
-// sendHandlerReg is returned by AddSendHandler to allow chaining .WithTerminalErrorHandler().
-type sendHandlerReg[S HandlerState, M Message, T any] struct {
+// sendHandlerReg is returned by RegisterSendHandler to allow chaining .WithTerminalErrorHandler().
+type sendHandlerReg[S Payload, M Payload, T Payload] struct {
 	w   *Worker
 	key string
 }
@@ -151,7 +143,7 @@ type sendHandlerReg[S HandlerState, M Message, T any] struct {
 // after all retries in the RetryPolicy are exhausted, instead of failing
 // the routine. The terminal error handler must have the same State, Message,
 // and Result types as the main handler.
-func (r sendHandlerReg[S, M, T]) WithTerminalErrorHandler(te SendTerminalErrorFunc[S, M, T], opts HandlerOptions) {
+func (r sendHandlerReg[S, M, T]) WithTerminalErrorHandler(te SendTerminalErrorHandler[S, M, T], opts HandlerOptions) {
 	runner := func(ctx *Context, rawState json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
 		var state S
 		if err := json.Unmarshal(rawState, &state); err != nil {
@@ -170,8 +162,8 @@ func (r sendHandlerReg[S, M, T]) WithTerminalErrorHandler(te SendTerminalErrorFu
 	registerTerminalError(r.w, r.key, te, runner, opts)
 }
 
-// callHandlerReg is returned by AddCallHandler to allow chaining .WithTerminalErrorHandler().
-type callHandlerReg[S HandlerState, Req Message, Resp any, T any] struct {
+// callHandlerReg is returned by RegisterCallHandler to allow chaining .WithTerminalErrorHandler().
+type callHandlerReg[S Payload, Req Payload, Resp Payload, T Payload] struct {
 	w   *Worker
 	key string
 }
@@ -180,7 +172,7 @@ type callHandlerReg[S HandlerState, Req Message, Resp any, T any] struct {
 // after all retries in the RetryPolicy are exhausted, instead of failing
 // the routine. The terminal error handler must have the same State, Request,
 // Response, and Result types as the main handler.
-func (r callHandlerReg[S, Req, Resp, T]) WithTerminalErrorHandler(te CallTerminalErrorFunc[S, Req, Resp, T], opts HandlerOptions) {
+func (r callHandlerReg[S, Req, Resp, T]) WithTerminalErrorHandler(te CallTerminalErrorHandler[S, Req, Resp, T], opts HandlerOptions) {
 	runner := func(ctx *Context, rawState json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
 		var state S
 		if err := json.Unmarshal(rawState, &state); err != nil {
@@ -208,18 +200,19 @@ func (r callHandlerReg[S, Req, Resp, T]) WithTerminalErrorHandler(te CallTermina
 	registerTerminalError(r.w, r.key, te, runner, opts)
 }
 
-// --- Add* registration functions ---
+// --- Register* registration functions ---
 
-// RegisterHandler registers a HandlerFunc keyed by state Kind.
-// Any HandlerFunc can serve as a routine entry point (via Go) or as a
+// RegisterHandler registers a Handler keyed by state DurableKind and result DurableKind.
+// Any Handler can serve as a routine entry point (via Go) or as a
 // continuation target (via After, Continue, Default).
 // HandlerOptions configures retry behavior for the handler.
 // Chain .WithTerminalErrorHandler() on the returned registration to register a terminal
 // error handler — it is invoked only after all retries are exhausted, instead
 // of failing the routine.
-func RegisterHandler[S HandlerState, T any](w *Worker, h HandlerFunc[S, T], opts HandlerOptions) handlerReg[S, T] {
-	var zero S
-	key := durablecore.HandlerKey(zero.Kind())
+func RegisterHandler[S Payload, T Payload](w *Worker, h Handler[S, T], opts HandlerOptions) handlerReg[S, T] {
+	var zeroS S
+	var zeroT T
+	key := durablecore.HandlerKey(zeroS.DurableKind(), zeroT.DurableKind())
 	runner := func(ctx *Context, rawState json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
 		var state S
 		if err := json.Unmarshal(rawState, &state); err != nil {
@@ -235,15 +228,16 @@ func RegisterHandler[S HandlerState, T any](w *Worker, h HandlerFunc[S, T], opts
 	return handlerReg[S, T]{w: w, key: key}
 }
 
-// RegisterSendHandler registers a SendFunc keyed by state Kind and message Kind.
+// RegisterSendHandler registers a SendHandler keyed by state DurableKind, message DurableKind, and result DurableKind.
 // HandlerOptions configures retry behavior for the handler.
 // Chain .WithTerminalErrorHandler() on the returned registration to register a terminal
 // error handler — it is invoked only after all retries are exhausted, instead
 // of failing the routine.
-func RegisterSendHandler[S HandlerState, M Message, T any](w *Worker, h SendFunc[S, M, T], opts HandlerOptions) sendHandlerReg[S, M, T] {
+func RegisterSendHandler[S Payload, M Payload, T Payload](w *Worker, h SendHandler[S, M, T], opts HandlerOptions) sendHandlerReg[S, M, T] {
 	var zeroS S
 	var zeroM M
-	key := durablecore.SendKey(zeroS.Kind(), zeroM.Kind())
+	var zeroT T
+	key := durablecore.SendKey(zeroS.DurableKind(), zeroM.DurableKind(), zeroT.DurableKind())
 	runner := func(ctx *Context, rawState json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
 		var state S
 		if err := json.Unmarshal(rawState, &state); err != nil {
@@ -263,15 +257,18 @@ func RegisterSendHandler[S HandlerState, M Message, T any](w *Worker, h SendFunc
 	return sendHandlerReg[S, M, T]{w: w, key: key}
 }
 
-// RegisterCallHandler registers a CallFunc keyed by state Kind and request Kind.
+// RegisterCallHandler registers a CallHandler keyed by state DurableKind, request DurableKind,
+// response DurableKind, and result DurableKind.
 // HandlerOptions configures retry behavior for the handler.
 // Chain .WithTerminalErrorHandler() on the returned registration to register a terminal
 // error handler — it is invoked only after all retries are exhausted, instead
 // of failing the routine.
-func RegisterCallHandler[S HandlerState, Req Message, Resp any, T any](w *Worker, h CallFunc[S, Req, Resp, T], opts HandlerOptions) callHandlerReg[S, Req, Resp, T] {
+func RegisterCallHandler[S Payload, Req Payload, Resp Payload, T Payload](w *Worker, h CallHandler[S, Req, Resp, T], opts HandlerOptions) callHandlerReg[S, Req, Resp, T] {
 	var zeroS S
 	var zeroReq Req
-	key := durablecore.CallKey(zeroS.Kind(), zeroReq.Kind())
+	var zeroResp Resp
+	var zeroT T
+	key := durablecore.CallKey(zeroS.DurableKind(), zeroReq.DurableKind(), zeroResp.DurableKind(), zeroT.DurableKind())
 	runner := func(ctx *Context, rawState json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
 		var state S
 		if err := json.Unmarshal(rawState, &state); err != nil {

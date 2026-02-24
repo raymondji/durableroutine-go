@@ -14,12 +14,12 @@ type client struct {
 
 var _ durable.ClientImpl = (*client)(nil)
 
-func (c *client) Go(_ context.Context, id string, kind string, state any) error {
-	return c.runtime.start(id, kind, state)
+func (c *client) Go(_ context.Context, id string, kind string, resultKind string, state any) error {
+	return c.runtime.start(id, kind, resultKind, state)
 }
 
-func (c *client) Send(_ context.Context, id string, stateKind string, msgKind string, msg any) error {
-	sendKey := durablecore.SendKey(stateKind, msgKind)
+func (c *client) Send(_ context.Context, id string, stateKind string, msgKind string, resultKind string, msg any) error {
+	sendKey := durablecore.SendKey(stateKind, msgKind, resultKind)
 	c.runtime.mu.Lock()
 	inst, ok := c.runtime.instances[id]
 	c.runtime.mu.Unlock()
@@ -30,7 +30,7 @@ func (c *client) Send(_ context.Context, id string, stateKind string, msgKind st
 	return nil
 }
 
-func (c *client) Call(_ context.Context, id string, stateKind string, reqKind string, req any) (any, error) {
+func (c *client) Call(_ context.Context, id string, stateKind string, reqKind string, respKind string, resultKind string, req any) (any, error) {
 	c.runtime.mu.Lock()
 	inst, ok := c.runtime.instances[id]
 	c.runtime.mu.Unlock()
@@ -39,7 +39,7 @@ func (c *client) Call(_ context.Context, id string, stateKind string, reqKind st
 	}
 
 	callName := reqKind
-	handlerKey := durablecore.CallKey(stateKind, reqKind)
+	handlerKey := durablecore.CallKey(stateKind, reqKind, respKind, resultKind)
 	respCh := make(chan callResp, 1)
 
 	inst.callChan <- callReq{
