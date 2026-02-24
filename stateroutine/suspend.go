@@ -57,8 +57,9 @@ func After[S HandlerState, T any](d time.Duration, handler HandlerFunc[S, T], st
 // similar to Go's select statement.
 //
 // This prioritizes cases in the following way:
-// 1. Calls (caller is blocking, may modify state, should be fast)
-// 2. Sends and Timers
+// 1. Timers (as timers are often used for timeouts, we don't want them to be blocked by other work)
+// 1. Calls (caller is waiting for a response)
+// 2. Sends
 // 3. Default (if present, runs if no other cases are ready)
 func Select[T any](cases ...Case) *Suspend[T] {
 	return &Suspend[T]{cases: cases}
