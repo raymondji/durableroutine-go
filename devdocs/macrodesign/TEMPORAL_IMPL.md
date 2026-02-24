@@ -145,14 +145,14 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
         }
         allQueryResults = mergeQueryResults(allQueryResults, output.QueryResults)
 
-        // 3. Handle child spawns (with ABANDON policy)
-        for _, spawn := range output.SpawnRequests {
+        // 3. Handle child starts (with ABANDON policy)
+        for _, start := range output.StartRequests {
             childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
                 ParentClosePolicy: enums.PARENT_CLOSE_POLICY_ABANDON,
             })
             childInput := WorkflowInput{
-                HandlerKey: "handler:" + spawn.StateKind,
-                State:      spawn.State,
+                HandlerKey: "handler:" + start.StateKind,
+                State:      start.State,
             }
             workflow.ExecuteChildWorkflow(childCtx, StateroutineWorkflow, childInput)
         }
@@ -374,7 +374,7 @@ type ActivityOutput struct {
     Result        any
     Suspend       SerializedSuspend  // always set for successful CallFunc handlers
     QueryResults  []QueryEntry
-    SpawnRequests []SpawnEntry
+    StartRequests []StartEntry
     SendRequests  []SendEntry
     CallResponse  any // for CallFunc handlers
 }
@@ -386,7 +386,7 @@ The `RunHandler` activity:
 3. Constructs a `stateroutine.Context` with the stateroutine ID
 4. Calls the handler with the deserialized state (and message, if applicable)
 5. **Validates**: For `CallFunc` handlers, if the handler returned `err == nil` but `Suspend == nil`, the activity returns an error — handlers must always return a `Suspend` when there is no error. Returning `(resp, nil, err)` with a non-nil error is valid because the error triggers retry/terminal-error-handler logic.
-6. Captures the `Suspend`, query results, spawn requests, and send requests from the context
+6. Captures the `Suspend`, query results, start requests, and send requests from the context
 7. Returns `ActivityOutput`
 
 Activity options (retry policy, timeouts) are configured from the `HandlerOptions` registered with each handler.

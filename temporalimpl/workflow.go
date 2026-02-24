@@ -100,15 +100,15 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
 		}
 		allQueryResults = mergeQueryResults(allQueryResults, output.QueryResults)
 
-		// 3. Handle child spawns.
-		for _, spawn := range output.SpawnRequests {
+		// 3. Handle child starts.
+		for _, start := range output.StartRequests {
 			childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
-				WorkflowID:        spawn.StateroutineID,
+				WorkflowID:        start.StateroutineID,
 				ParentClosePolicy: enumspb.PARENT_CLOSE_POLICY_ABANDON,
 			})
 			childInput := WorkflowInput{
-				HandlerKey: "handler:" + spawn.StateKind,
-				State:      spawn.State,
+				HandlerKey: "handler:" + start.StateKind,
+				State:      start.State,
 			}
 			workflow.ExecuteChildWorkflow(childCtx, StateroutineWorkflow, childInput)
 		}

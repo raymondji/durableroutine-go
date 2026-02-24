@@ -76,9 +76,9 @@ When `start` is called:
 1. Create the instance
 2. Look up the handler by `"handler:" + kind`
 3. Run the handler synchronously
-4. Capture query results, spawn requests, and send requests from the context
+4. Capture query results, start requests, and send requests from the context
 5. Store the suspend cases on the instance
-6. Process spawn requests (recursively start children)
+6. Process start requests (recursively start children)
 7. Process send requests (deliver signals to target instances)
 
 ## Step-by-Step Execution
@@ -108,10 +108,10 @@ func (r *Runtime) AdvanceTime(d time.Duration)
 
 When a handler fires:
 1. Run the handler synchronously
-2. Capture query results, spawn requests, send requests
+2. Capture query results, start requests, send requests
 3. If the handler returns `Done`, mark the instance as done and notify waiters
 4. Otherwise, store the new suspend cases
-5. Process spawn requests and send requests
+5. Process start requests and send requests
 
 ## Timer Simulation
 

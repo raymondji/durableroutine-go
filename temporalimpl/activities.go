@@ -111,8 +111,8 @@ func RunHandler(ctx context.Context, input ActivityInput) (ActivityOutput, error
 			Result:    qr.Result,
 		})
 	}
-	for _, sr := range sctx.SpawnRequests() {
-		output.SpawnRequests = append(output.SpawnRequests, SpawnEntry{
+	for _, sr := range sctx.StartRequests() {
+		output.StartRequests = append(output.StartRequests, StartEntry{
 			StateroutineID: sr.StateroutineID,
 			StateKind:      sr.StateKind,
 			State:          sr.State,

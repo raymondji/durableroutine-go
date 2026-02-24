@@ -60,11 +60,11 @@ type FanoutService struct {
 	// Injected dependencies would go here.
 }
 
-func (s *FanoutService) SpawnItems(ctx *stateroutine.Context, state FanoutState) (*stateroutine.Suspend[FanoutResult], error) {
+func (s *FanoutService) StartItems(ctx *stateroutine.Context, state FanoutState) (*stateroutine.Suspend[FanoutResult], error) {
 	parentID := ctx.StateroutineID()
 
 	for _, item := range state.Items {
-		ctx.Spawn(fmt.Sprintf("item-%s", item.ID),
+		ctx.Start(fmt.Sprintf("item-%s", item.ID),
 			ItemState{ID: item.ID, Data: item.Data, ParentID: parentID})
 	}
 
@@ -115,7 +115,7 @@ func (s *ItemService) ProcessItem(ctx *stateroutine.Context, state ItemState) (*
 
 // RegisterHandlers registers all fanout handlers with the worker.
 func RegisterHandlers(w *stateroutine.Worker, fanoutSvc *FanoutService, itemSvc *ItemService) {
-	stateroutine.RegisterHandler(w, fanoutSvc.SpawnItems, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, fanoutSvc.StartItems, stateroutine.HandlerOptions{})
 	stateroutine.RegisterHandler(w, itemSvc.ProcessItem, stateroutine.HandlerOptions{})
 	stateroutine.RegisterSendHandler(w, fanoutSvc.CollectResult, stateroutine.HandlerOptions{})
 }

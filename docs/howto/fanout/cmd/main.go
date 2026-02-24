@@ -37,7 +37,7 @@ func main() {
 
 	client := stateroutine.NewClientFrom(temporalimpl.NewClient(tc, "fanout-queue"))
 
-	h, err := stateroutine.Start(client, ctx, "batch-001", fanoutSvc.SpawnItems, fanout.FanoutState{
+	h, err := stateroutine.Start(client, ctx, "batch-001", fanoutSvc.StartItems, fanout.FanoutState{
 		Items: []struct {
 			ID   string
 			Data string

@@ -7,7 +7,7 @@ type Context struct {
 	context.Context
 
 	stateroutineID string
-	spawnRequests  []spawnRequest
+	startRequests  []startRequest
 	sendRequests   []sendRequest
 	queryResults   []queryEntry
 }
@@ -19,7 +19,7 @@ type sendRequest struct {
 	msg            any
 }
 
-type spawnRequest struct {
+type startRequest struct {
 	stateroutineID string
 	state          HandlerState
 }
@@ -35,11 +35,11 @@ func (c *Context) StateroutineID() string {
 	return c.stateroutineID
 }
 
-// Spawn requests that a child stateroutine be started when the current handler
+// Start requests that a child stateroutine be started when the current handler
 // completes. The child runs as an independent durable stateroutine (Temporal child
 // workflow). The state.Kind() determines which registered handler runs.
-func (c *Context) Spawn(stateroutineID string, state HandlerState) {
-	c.spawnRequests = append(c.spawnRequests, spawnRequest{
+func (c *Context) Start(stateroutineID string, state HandlerState) {
+	c.startRequests = append(c.startRequests, startRequest{
 		stateroutineID: stateroutineID,
 		state:          state,
 	})
@@ -79,11 +79,11 @@ func (c *Context) QueryResults() []QueryEntry {
 	return out
 }
 
-// SpawnRequests returns the accumulated spawn requests.
-func (c *Context) SpawnRequests() []SpawnEntry {
-	out := make([]SpawnEntry, len(c.spawnRequests))
-	for i, e := range c.spawnRequests {
-		out[i] = SpawnEntry{StateroutineID: e.stateroutineID, StateKind: e.state.Kind(), State: e.state}
+// StartRequests returns the accumulated start requests.
+func (c *Context) StartRequests() []StartEntry {
+	out := make([]StartEntry, len(c.startRequests))
+	for i, e := range c.startRequests {
+		out[i] = StartEntry{StateroutineID: e.stateroutineID, StateKind: e.state.Kind(), State: e.state}
 	}
 	return out
 }
@@ -108,8 +108,8 @@ type QueryEntry struct {
 	Result    any
 }
 
-// SpawnEntry is the exported view of a spawn request.
-type SpawnEntry struct {
+// StartEntry is the exported view of a start request.
+type StartEntry struct {
 	StateroutineID string
 	StateKind      string
 	State          any

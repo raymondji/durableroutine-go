@@ -6,10 +6,6 @@ These are ready for Claude to work on.
 
 https://github.com/indeedeng/iwf
 
-## Rename Spawn to Start or something similar for consistency
-
-Let's aim for maximum consistency on naming with the APIs.
-
 # Draft TODOs
 
 These are not ready for Claude to work on yet.
@@ -24,7 +20,7 @@ Write the output under RFCs/SINGLE_VS_MULTI_PACKAGE.md
 
 # DONE
 
-## Deferred Spawn/Send clarity
+## Deferred Start/Send clarity
 
 Explored 5 options (rename methods, fold into Suspend, docs only, pending tokens, keep imperative + enhanced docs). Recommendation: **Option E** — keep imperative calls, make deferred nature prominent in doc comments and design doc. Loop-based usage in fanout/pipeline strongly favors imperative calls.
 

@@ -31,7 +31,7 @@ type ActivityOutput struct {
 	Result        any               `json:"result,omitempty"`
 	Suspend       *SerializedSuspend `json:"suspend,omitempty"`
 	QueryResults  []QueryEntry      `json:"queryResults,omitempty"`
-	SpawnRequests []SpawnEntry      `json:"spawnRequests,omitempty"`
+	StartRequests []StartEntry      `json:"startRequests,omitempty"`
 	SendRequests  []SendEntry       `json:"sendRequests,omitempty"`
 	CallResponse  any               `json:"callResponse,omitempty"`
 }
@@ -51,8 +51,8 @@ type SerializedCase struct {
 	HandlerKey    string         `json:"handlerKey"`
 }
 
-// SpawnEntry is a request to start a child stateroutine.
-type SpawnEntry struct {
+// StartEntry is a request to start a child stateroutine.
+type StartEntry struct {
 	StateroutineID string `json:"stateroutineID"`
 	StateKind      string `json:"stateKind"`
 	State          any    `json:"state"`

@@ -20,7 +20,7 @@ func TestFanoutCollectAllResults(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	h, err := stateroutine.Start(env.Client, ctx, env.UniqueID("fanout"), fanoutSvc.SpawnItems, fanout.FanoutState{
+	h, err := stateroutine.Start(env.Client, ctx, env.UniqueID("fanout"), fanoutSvc.StartItems, fanout.FanoutState{
 		Items: []struct {
 			ID   string
 			Data string
