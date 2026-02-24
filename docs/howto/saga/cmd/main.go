@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/raymondji/stateroutine/examples/saga"
+	"github.com/raymondji/stateroutine/docs/howto/saga"
 	"github.com/raymondji/stateroutine/stateroutine"
 )
 

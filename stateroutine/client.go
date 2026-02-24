@@ -12,7 +12,7 @@ import (
 type Client interface {
 	start(ctx context.Context, id string, kind string, state any) error
 	send(ctx context.Context, id string, stateKind string, msgKind string, msg any) error
-	call(ctx context.Context, id string, methodName string, req any) (any, error)
+	call(ctx context.Context, id string, stateKind string, reqKind string, req any) (any, error)
 	query(ctx context.Context, id string, queryName string) (any, error)
 	get(ctx context.Context, id string) (any, error)
 }
@@ -73,12 +73,14 @@ func ClientSend[S HandlerState, M Message, T any](c Client, ctx context.Context,
 }
 
 // ClientCall sends a synchronous request to a stateroutine's method and waits
-// for the response. The method name is derived from req.Kind(). The handler
-// parameter is used only for type inference of the response type — it is not
-// called. Pass the same function registered with AddCallHandler.
+// for the response. The handler parameter is used only for type inference of
+// the target state and response types — it is not called. Pass the same
+// function registered with AddCallHandler. Both stateKind and reqKind are
+// derived from the handler's type parameters for correct routing.
 func ClientCall[S HandlerState, Req Message, Resp any, T any](c Client, ctx context.Context, id string,
 	handler CallFunc[S, Req, Resp, T], req Req) (Resp, error) {
-	raw, err := c.call(ctx, id, req.Kind(), req)
+	var zeroS S
+	raw, err := c.call(ctx, id, zeroS.Kind(), req.Kind(), req)
 	if err != nil {
 		var zero Resp
 		return zero, err

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/raymondji/stateroutine/examples/fanout"
+	"github.com/raymondji/stateroutine/docs/howto/fanout"
 	"github.com/raymondji/stateroutine/stateroutine"
 )
 

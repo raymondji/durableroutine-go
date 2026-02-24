@@ -171,28 +171,28 @@ Terminal error handlers are invoked only after all retries configured in the Ret
 
 ### Examples
 
-See the [`examples/`](examples/) directory:
+See the [`docs/howto/`](docs/howto/) directory:
 
-- **[`examples/reminder/`](examples/reminder/main.go)** — Timer chain with per-handler state. Demonstrates `After` for simple timer-based progression.
-- **[`examples/order/`](examples/order/main.go)** — Order lifecycle with Send + timer + Query. Demonstrates `OnSend`, `SetQueryResult`, `OnTimer`, and `Select`.
-- **[`examples/booking/`](examples/booking/main.go)** — Multi-step client-driven stateroutine with Send + Call + Query. Client sends payment/shipping info via `ClientSend`, can cancel via `ClientCall`, and check status via `ClientQuery`. Demonstrates `OnSendTerminalError` to release the reservation if payment fails after all retries.
-- **[`examples/auction/`](examples/auction/main.go)** — Auction with synchronous bidding via `ClientCall`. Bidders place bids and immediately learn whether they were accepted or outbid. Demonstrates `OnCall` for request-response that advances state, `SetQueryResult` for live status, `OnTimer` for auction close, and `OnCallTerminalError` to return an error response to the blocked caller without crashing the auction.
-- **[`examples/fanout/`](examples/fanout/main.go)** — Fan-out/fan-in using child stateroutines and stateroutine-to-stateroutine Send. Parent spawns children via `ctx.Spawn`, children send results back via `stateroutine.Send`. Parent collects via `OnSend`.
-- **[`examples/pipeline/`](examples/pipeline/main.go)** — Producer-consumer pipeline. Producer sends items to consumer via `stateroutine.Send`. Consumer processes items one at a time via `OnSend`.
-- **[`examples/saga/`](examples/saga/main.go)** — SAGA compensation pattern with terminal error handlers. Sequential service calls with compensation via `OnTerminalError` — when all retries are exhausted, the terminal error handler runs compensation logic instead of failing the stateroutine.
-- **[`examples/batch/`](examples/batch/main.go)** — Chunked batch processing with cancellation. Processes a large dataset in chunks using `Select` + `Default`, checking for a cancel signal between chunks. Like a GenServer that checks its mailbox between batches.
+- **[`docs/howto/reminder/`](docs/howto/reminder/reminder.go)** — Timer chain with per-handler state. Demonstrates `After` for simple timer-based progression.
+- **[`docs/howto/order/`](docs/howto/order/order.go)** — Order lifecycle with Send + timer + Query. Demonstrates `OnSend`, `SetQueryResult`, `OnTimer`, and `Select`.
+- **[`docs/howto/booking/`](docs/howto/booking/booking.go)** — Multi-step client-driven stateroutine with Send + Call + Query. Client sends payment/shipping info via `ClientSend`, can cancel via `ClientCall`, and check status via `ClientQuery`. Demonstrates `OnSendTerminalError` to release the reservation if payment fails after all retries.
+- **[`docs/howto/auction/`](docs/howto/auction/auction.go)** — Auction with synchronous bidding via `ClientCall`. Bidders place bids and immediately learn whether they were accepted or outbid. Demonstrates `OnCall` for request-response that advances state, `SetQueryResult` for live status, `OnTimer` for auction close, and `OnCallTerminalError` to return an error response to the blocked caller without crashing the auction.
+- **[`docs/howto/fanout/`](docs/howto/fanout/fanout.go)** — Fan-out/fan-in using child stateroutines and stateroutine-to-stateroutine Send. Parent spawns children via `ctx.Spawn`, children send results back via `stateroutine.Send`. Parent collects via `OnSend`.
+- **[`docs/howto/pipeline/`](docs/howto/pipeline/pipeline.go)** — Producer-consumer pipeline. Producer sends items to consumer via `stateroutine.Send`. Consumer processes items one at a time via `OnSend`.
+- **[`docs/howto/saga/`](docs/howto/saga/saga.go)** — SAGA compensation pattern with terminal error handlers. Sequential service calls with compensation via `OnTerminalError` — when all retries are exhausted, the terminal error handler runs compensation logic instead of failing the stateroutine.
+- **[`docs/howto/batch/`](docs/howto/batch/batch.go)** — Chunked batch processing with cancellation. Processes a large dataset in chunks using `Select` + `Default`, checking for a cancel signal between chunks. Like a GenServer that checks its mailbox between batches.
 
 ### How Common Patterns Map
 
 | Pattern | stateroutine approach |
 |---|---|
-| **Do something, sleep, do something** | Handler does work, returns `After(duration, nextHandler, state)`. Each handler is an activity. See [`examples/reminder/`](examples/reminder/main.go). |
-| **Wait for one of several events** | Handler returns `Select(OnSend(...), OnCall(...), OnTimer(...))`. The runtime sets up a Temporal selector. Query results are registered separately via `SetQueryResult`. See [`examples/order/`](examples/order/main.go). |
-| **Fan-out / fan-in** | Parent spawns children via `ctx.Spawn(id, state)`. Each child calls `stateroutine.Send(ctx, parentID, result)` to send results back. Parent collects via `OnSend`, one at a time. See [`examples/fanout/`](examples/fanout/main.go). |
-| **Producer-consumer** | Producer calls `stateroutine.Send` in a loop to send items. Consumer uses `Select(OnSend(receiveItem, state), OnSend(receiveDone, state))` to process items and detect completion. See [`examples/pipeline/`](examples/pipeline/main.go). |
-| **SAGA compensation** | Register terminal error handlers via `OnTerminalError` that run compensation logic when retries are exhausted. See [`examples/saga/`](examples/saga/main.go). |
+| **Do something, sleep, do something** | Handler does work, returns `After(duration, nextHandler, state)`. Each handler is an activity. See [`docs/howto/reminder/`](docs/howto/reminder/reminder.go). |
+| **Wait for one of several events** | Handler returns `Select(OnSend(...), OnCall(...), OnTimer(...))`. The runtime sets up a Temporal selector. Query results are registered separately via `SetQueryResult`. See [`docs/howto/order/`](docs/howto/order/order.go). |
+| **Fan-out / fan-in** | Parent spawns children via `ctx.Spawn(id, state)`. Each child calls `stateroutine.Send(ctx, parentID, result)` to send results back. Parent collects via `OnSend`, one at a time. See [`docs/howto/fanout/`](docs/howto/fanout/fanout.go). |
+| **Producer-consumer** | Producer calls `stateroutine.Send` in a loop to send items. Consumer uses `Select(OnSend(receiveItem, state), OnSend(receiveDone, state))` to process items and detect completion. See [`docs/howto/pipeline/`](docs/howto/pipeline/pipeline.go). |
+| **SAGA compensation** | Register terminal error handlers via `OnTerminalError` that run compensation logic when retries are exhausted. See [`docs/howto/saga/`](docs/howto/saga/saga.go). |
 | **Checkpoint and continue** | Handler does expensive work, returns `Continue(nextHandler, state)`. The runtime checkpoints state (continue-as-new boundary) and immediately invokes the next handler without waiting. |
-| **Cancellable batch processing** | Process items in chunks. Between chunks, return `Select(OnSend(cancelHandler, state), Default(nextChunkHandler, state))`. If a cancel signal is pending it fires; otherwise Default continues to the next chunk. See [`examples/batch/`](examples/batch/main.go). |
+| **Cancellable batch processing** | Process items in chunks. Between chunks, return `Select(OnSend(cancelHandler, state), Default(nextChunkHandler, state))`. If a cancel signal is pending it fires; otherwise Default continues to the next chunk. See [`docs/howto/batch/`](docs/howto/batch/batch.go). |
 | **Drain buffered signals** | Handler returns `Select(OnSend(handler, state), Default(doneHandler, state))`. Processes pending signals one at a time; when none are buffered, the default case fires. |
 | **Request-response** | Client uses `ClientCall(client, ctx, id, handler, req)` to invoke a method that returns a typed response. |
 | **Read-only status check** | Client uses `ClientQuery(client, ctx, id, resp)` for instant, non-mutating reads of static query results. |

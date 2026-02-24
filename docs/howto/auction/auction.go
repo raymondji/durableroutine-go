@@ -62,6 +62,7 @@ type AuctionResult struct {
 
 type BiddingState struct {
 	ItemName   string
+	Duration   time.Duration
 	HighestBid float64
 	Leader     string
 	BidCount   int
@@ -80,6 +81,7 @@ func (s *AuctionService) OpenAuction(ctx *stateroutine.Context, state AuctionSta
 
 	bidding := BiddingState{
 		ItemName:   state.ItemName,
+		Duration:   state.Duration,
 		HighestBid: state.StartingBid,
 	}
 
@@ -100,7 +102,10 @@ func (s *AuctionService) PlaceBid(ctx *stateroutine.Context, state BiddingState,
 			Accepted:   false,
 			HighestBid: state.HighestBid,
 			Message:    fmt.Sprintf("bid too low, current highest is $%.2f", state.HighestBid),
-		}, nil, nil
+		}, stateroutine.Select[AuctionResult](
+			stateroutine.OnCall(s.PlaceBid, state),
+			stateroutine.OnTimer(state.Duration, s.CloseAuction, state),
+		), nil
 	}
 
 	fmt.Printf("new high bid: $%.2f by %s (was $%.2f by %s)\n",
@@ -123,7 +128,7 @@ func (s *AuctionService) PlaceBid(ctx *stateroutine.Context, state BiddingState,
 		Message:    "bid accepted, you are the highest bidder",
 	}, stateroutine.Select[AuctionResult](
 		stateroutine.OnCall(s.PlaceBid, state),
-		stateroutine.OnTimer(30*time.Minute, s.CloseAuction, state),
+		stateroutine.OnTimer(state.Duration, s.CloseAuction, state),
 	), nil
 }
 
@@ -136,7 +141,7 @@ func (s *AuctionService) BidFailed(ctx *stateroutine.Context, state BiddingState
 		Message:  fmt.Sprintf("bid processing failed: %v", err),
 	}, stateroutine.Select[AuctionResult](
 		stateroutine.OnCall(s.PlaceBid, state),
-		stateroutine.OnTimer(30*time.Minute, s.CloseAuction, state),
+		stateroutine.OnTimer(state.Duration, s.CloseAuction, state),
 	), nil
 }
 

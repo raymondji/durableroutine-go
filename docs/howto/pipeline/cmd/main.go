@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/raymondji/stateroutine/examples/pipeline"
+	"github.com/raymondji/stateroutine/docs/howto/pipeline"
 	"github.com/raymondji/stateroutine/stateroutine"
 )
 

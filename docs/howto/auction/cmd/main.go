@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/raymondji/stateroutine/examples/auction"
+	"github.com/raymondji/stateroutine/docs/howto/auction"
 	"github.com/raymondji/stateroutine/stateroutine"
 )
 
