@@ -153,14 +153,14 @@ Terminal error handlers are invoked only after all retries configured in the Ret
 - **`Context`** — wraps `context.Context` with stateroutine capabilities
 - **`ctx.StateroutineID()`** — get the current stateroutine's ID (reply address for children)
 - **`ctx.Spawn(id, state)`** — spawn a child stateroutine (state.Kind() determines handler)
-- **`Send[M](ctx, stateroutineID, msg)`** — send a fire-and-forget message to another stateroutine (inbox name = `msg.Kind()`)
+- **`Send[S, M, T](ctx, stateroutineID, handler, msg)`** — buffer a fire-and-forget message to another stateroutine (delivered after handler returns). The handler is passed for type inference; pass `nil` with explicit type params when the sender doesn't have the receiver's handler. Inbox name = `msg.Kind()`.
 - **`SetQueryResult[Resp](ctx, resp)`** — store a static query result that persists across state transitions. Takes effect after the current handler returns its Suspend. Replaces any existing result for the same `Resp.Kind()`. Clients retrieve the value via `ClientQuery`. Maps to a Temporal Query handler that returns the stored value.
 
 #### Client (typed top-level functions)
 
 - **`Start[S, T](client, ctx, id, handler, state)`** — start a new stateroutine instance (state.Kind() determines handler). The handler function is passed for Go type inference of the result type `T`. If `id` is empty, a random UUID is generated. Returns a typed `Handle[T]`.
 - **`Handle[T].Get(ctx)`** — blocks until the stateroutine completes and returns the typed result. Maps to Temporal's `WorkflowRun.Get`.
-- **`ClientSend[M](client, ctx, id, msg)`** — fire-and-forget message to a stateroutine (inbox name = `msg.Kind()`)
+- **`ClientSend[S, M, T](client, ctx, id, handler, msg)`** — fire-and-forget message to a stateroutine. The handler is passed for type inference of the target state kind (not called). Inbox name = `msg.Kind()`.
 - **`ClientCall[S, Req, Resp, T](client, ctx, id, handler, req)`** — synchronous request-response. The handler function is passed for Go type inference of `Resp` (not called).
 - **`ClientQuery[Resp](client, ctx, id, resp)`** — synchronous read-only query. Pass a zero value of the response type for routing (via `Kind()`) and type inference.
 - **`ClientGet[T](client, ctx, id)`** — blocks until the stateroutine completes and returns the typed result. Useful when you only have a stateroutine ID (e.g., from config or database) and not a `Handle`.
@@ -326,7 +326,7 @@ stateroutine draws from several systems. This section maps concepts across them 
 |---|---|---|---|---|
 | **Unit of execution** | Stateroutine | Workflow | GenServer process | Goroutine |
 | **Start** | `Start(client, ctx, id, handler, state)` | `client.ExecuteWorkflow(...)` | `GenServer.start_link(mod, args)` | `go func()` |
-| **Fire-and-forget message** | `ClientSend` / `Send` | Signal | `GenServer.cast` | `ch <- msg` |
+| **Fire-and-forget message** | `ClientSend[S,M,T]` / `Send[S,M,T]` | Signal | `GenServer.cast` | `ch <- msg` |
 | **Request-response** | `ClientCall` | Update | `GenServer.call` | (no direct equivalent) |
 | **Read-only query** | `ClientQuery` + `SetQueryResult` | Query | `:sys.get_state` / custom call | (no direct equivalent) |
 | **Get result** | `Handle.Get` / `ClientGet` | `WorkflowRun.Get` | (process exit value) | (no direct equivalent) |

@@ -1,21 +1,17 @@
-// Command reminder demonstrates a simple durable stateroutine that sends a
+// Package reminder demonstrates a simple durable stateroutine that sends a
 // sequence of emails with durable sleeps between them.
 // Uses struct-based handlers for dependency injection.
 // Each handler declares its own state type — state flows forward via After().
-package main
+package reminder
 
 import (
-	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/raymondji/stateroutine/stateroutine"
 )
 
 // --- Per-step state types ---
-// Each step has its own state type with a unique Kind, even though they
-// carry the same data. This is how the runtime distinguishes handlers.
 
 type InitialState struct {
 	Email string
@@ -56,30 +52,9 @@ func (s *ReminderService) SendFinal(ctx *stateroutine.Context, state FinalState)
 	return stateroutine.Done(stateroutine.Unit{}), nil
 }
 
-// --- main ---
-
-func main() {
-	ctx := context.Background()
-
-	svc := &ReminderService{}
-
-	w := stateroutine.NewWorker("reminder-queue")
+// RegisterHandlers registers all reminder handlers with the worker.
+func RegisterHandlers(w *stateroutine.Worker, svc *ReminderService) {
 	stateroutine.AddHandler(w, svc.SendInitial, stateroutine.HandlerOptions{})
 	stateroutine.AddHandler(w, svc.SendFollowUp, stateroutine.HandlerOptions{})
 	stateroutine.AddHandler(w, svc.SendFinal, stateroutine.HandlerOptions{})
-
-	go func() {
-		if err := w.Start(); err != nil {
-			log.Fatal(err)
-		}
-	}()
-	defer w.Stop()
-
-	client := stateroutine.NewClient()
-	if _, err := stateroutine.Start(client, ctx, "reminder-user-42",
-		svc.SendInitial, InitialState{Email: "user@example.com"}); err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println("reminder started, will send 3 emails over ~8 days")
 }

@@ -1,12 +1,10 @@
-// Command order demonstrates a durable stateroutine that waits for messages
+// Package order demonstrates a durable stateroutine that waits for messages
 // using Select/OnSend, modelling an order lifecycle with Send + timer + Query.
 // Uses struct-based handlers for dependency injection.
-package main
+package order
 
 import (
-	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/raymondji/stateroutine/stateroutine"
@@ -102,53 +100,11 @@ func (s *OrderService) ExpireOrder(ctx *stateroutine.Context, _ PendingState) (*
 	return stateroutine.Done(OrderResult{Status: "timed_out"}), nil
 }
 
-// --- main ---
-
-func main() {
-	ctx := context.Background()
-
-	svc := &OrderService{}
-
-	w := stateroutine.NewWorker("order-queue")
+// RegisterHandlers registers all order handlers with the worker.
+func RegisterHandlers(w *stateroutine.Worker, svc *OrderService) {
 	stateroutine.AddHandler(w, svc.CreateOrder, stateroutine.HandlerOptions{})
 	stateroutine.AddSendHandler(w, svc.PlaceOrder, stateroutine.HandlerOptions{})
 	stateroutine.AddSendHandler(w, svc.CancelOrder, stateroutine.HandlerOptions{})
 	stateroutine.AddHandler(w, svc.ShipOrder, stateroutine.HandlerOptions{})
 	stateroutine.AddHandler(w, svc.ExpireOrder, stateroutine.HandlerOptions{})
-
-	go func() {
-		if err := w.Start(); err != nil {
-			log.Fatal(err)
-		}
-	}()
-	defer w.Stop()
-
-	client := stateroutine.NewClient()
-
-	h, err := stateroutine.Start(client, ctx, "order-123", svc.CreateOrder, OrderState{})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	status, err := stateroutine.ClientQuery(client, ctx, "order-123", StatusResp{})
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("status: %s\n", status.Status)
-
-	if err := stateroutine.ClientSend(client, ctx, "order-123", PlaceOrderReq{
-		OrderID:       "ORD-456",
-		Items:         []string{"widget-a", "widget-b"},
-		PaymentMethod: "card",
-		Total:         99.99,
-	}); err != nil {
-		log.Fatal(err)
-	}
-
-	// Wait for the stateroutine to complete and get the result.
-	result, err := h.Get(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("order result: %s\n", result.Status)
 }

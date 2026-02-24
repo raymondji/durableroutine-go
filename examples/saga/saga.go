@@ -1,4 +1,4 @@
-// Command saga demonstrates the SAGA compensation pattern using terminal error
+// Package saga demonstrates the SAGA compensation pattern using terminal error
 // handlers. Each booking step runs as its own activity with independent retries.
 // When all retries are exhausted, the terminal error handler runs compensation
 // logic (cancelling previously booked services) instead of failing the stateroutine.
@@ -6,23 +6,17 @@
 // Continue checkpoints state between steps so that if the worker crashes after
 // booking a flight but before booking a hotel, the flight confirmation is
 // preserved and the saga resumes from the hotel step.
-//
-// Compare with Temporal's saga sample:
-// https://github.com/temporalio/samples-go/blob/main/saga/workflow.go
-package main
+package saga
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 
 	"github.com/raymondji/stateroutine/stateroutine"
 )
 
 // --- Per-step state types ---
-// Each step carries the original trip details plus accumulated confirmations.
-// Continue checkpoints these between steps.
 
 type TripState struct {
 	TripID      string
@@ -65,8 +59,6 @@ type TripService struct {
 	// Injected dependencies would go here (e.g., flight/hotel/car API clients).
 }
 
-// BookFlight is the entry point. Books a flight and checkpoints the
-// confirmation before proceeding to the hotel.
 func (s *TripService) BookFlight(ctx *stateroutine.Context, state TripState) (*stateroutine.Suspend[TripResult], error) {
 	flightConf, err := s.bookFlight(ctx, state.FlightID)
 	if err != nil {
@@ -82,8 +74,6 @@ func (s *TripService) BookFlight(ctx *stateroutine.Context, state TripState) (*s
 	}), nil
 }
 
-// BookHotel runs after the flight confirmation is checkpointed.
-// On terminal error (after retries exhausted), CompensateHotel cancels the flight.
 func (s *TripService) BookHotel(ctx *stateroutine.Context, state FlightBookedState) (*stateroutine.Suspend[TripResult], error) {
 	hotelConf, err := s.bookHotel(ctx, state.HotelID)
 	if err != nil {
@@ -99,15 +89,11 @@ func (s *TripService) BookHotel(ctx *stateroutine.Context, state FlightBookedSta
 	}), nil
 }
 
-// CompensateHotel is the terminal error handler for BookHotel. It cancels the
-// flight booking when the hotel booking fails after all retries.
 func (s *TripService) CompensateHotel(ctx *stateroutine.Context, state FlightBookedState, err error) (*stateroutine.Suspend[TripResult], error) {
 	s.cancelFlight(ctx, state.FlightConfirmation)
 	return nil, fmt.Errorf("book hotel failed, compensated flight: %w", err)
 }
 
-// BookCar runs after the hotel confirmation is checkpointed.
-// On terminal error (after retries exhausted), CompensateCar cancels both hotel and flight.
 func (s *TripService) BookCar(ctx *stateroutine.Context, state HotelBookedState) (*stateroutine.Suspend[TripResult], error) {
 	carConf, err := s.bookCar(ctx, state.CarRentalID)
 	if err != nil {
@@ -122,8 +108,6 @@ func (s *TripService) BookCar(ctx *stateroutine.Context, state HotelBookedState)
 	}), nil
 }
 
-// CompensateCar is the terminal error handler for BookCar. It cancels both
-// hotel and flight bookings when the car booking fails after all retries.
 func (s *TripService) CompensateCar(ctx *stateroutine.Context, state HotelBookedState, err error) (*stateroutine.Suspend[TripResult], error) {
 	s.cancelHotel(ctx, state.HotelConfirmation)
 	s.cancelFlight(ctx, state.FlightConfirmation)
@@ -161,14 +145,8 @@ func (s *TripService) cancelHotel(_ context.Context, confirmation string) {
 	fmt.Printf("compensating: cancelling hotel %s\n", confirmation)
 }
 
-// --- main ---
-
-func main() {
-	ctx := context.Background()
-
-	svc := &TripService{}
-
-	w := stateroutine.NewWorker("saga-queue")
+// RegisterHandlers registers all saga handlers with the worker.
+func RegisterHandlers(w *stateroutine.Worker, svc *TripService) {
 	stateroutine.AddHandler(w, svc.BookFlight, stateroutine.HandlerOptions{
 		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
 	})
@@ -178,31 +156,4 @@ func main() {
 	stateroutine.AddHandler(w, svc.BookCar, stateroutine.HandlerOptions{
 		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
 	}).OnTerminalError(svc.CompensateCar)
-
-	go func() {
-		if err := w.Start(); err != nil {
-			log.Fatal(err)
-		}
-	}()
-	defer w.Stop()
-
-	client := stateroutine.NewClient()
-
-	h, err := stateroutine.Start(client, ctx, "trip-789", svc.BookFlight, TripState{
-		TripID:      "TRIP-789",
-		FlightID:    "FL-100",
-		HotelID:     "HT-200",
-		CarRentalID: "CR-300",
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Wait for the trip booking to complete.
-	result, err := h.Get(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("trip booked: flight=%s hotel=%s car=%s\n",
-		result.FlightConfirmation, result.HotelConfirmation, result.CarConfirmation)
 }

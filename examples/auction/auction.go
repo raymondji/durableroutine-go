@@ -1,4 +1,4 @@
-// Command auction demonstrates ClientCall for synchronous request-response.
+// Package auction demonstrates ClientCall for synchronous request-response.
 // Bidders place bids via ClientCall and immediately learn whether their bid
 // was accepted or outbid. The auction runs until a timer expires, then
 // completes with the winning bid. Current status is available via ClientQuery.
@@ -6,18 +6,10 @@
 // Also demonstrates OnCallTerminalError: if bid processing fails after all
 // retries, the terminal error handler returns an error response to the blocked
 // caller instead of failing the entire stateroutine.
-//
-// This shows the key difference between Send and Call:
-//   - Send (fire-and-forget): the caller doesn't wait for a response.
-//   - Call (request-response): the caller blocks until the handler responds.
-//
-// Bidders need to know if their bid was accepted, making Call the right choice.
-package main
+package auction
 
 import (
-	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/raymondji/stateroutine/stateroutine"
@@ -102,13 +94,8 @@ func (s *AuctionService) OpenAuction(ctx *stateroutine.Context, state AuctionSta
 	), nil
 }
 
-// PlaceBid handles a synchronous bid. The caller blocks until this returns,
-// so they immediately know whether their bid was accepted. This is why Call
-// is the right primitive here — Send would not give the bidder feedback.
 func (s *AuctionService) PlaceBid(ctx *stateroutine.Context, state BiddingState, req PlaceBidReq) (PlaceBidResp, *stateroutine.Suspend[AuctionResult], error) {
 	if req.Amount <= state.HighestBid {
-		// Reject the bid but don't advance state — stay in the same bidding
-		// state waiting for more bids. Return nil Suspend to keep waiting.
 		return PlaceBidResp{
 			Accepted:   false,
 			HighestBid: state.HighestBid,
@@ -130,7 +117,6 @@ func (s *AuctionService) PlaceBid(ctx *stateroutine.Context, state BiddingState,
 		BidCount:   state.BidCount,
 	})
 
-	// Accept the bid and continue waiting for more bids or the timer.
 	return PlaceBidResp{
 		Accepted:   true,
 		HighestBid: state.HighestBid,
@@ -141,15 +127,10 @@ func (s *AuctionService) PlaceBid(ctx *stateroutine.Context, state BiddingState,
 	), nil
 }
 
-// BidFailed is the terminal error handler for PlaceBid. If bid processing
-// fails after all retries (e.g., validation service unreachable), return an
-// error response to the blocked caller so they can retry manually, without
-// crashing the auction.
 func (s *AuctionService) BidFailed(ctx *stateroutine.Context, state BiddingState, req PlaceBidReq, err error) (PlaceBidResp, *stateroutine.Suspend[AuctionResult], error) {
 	fmt.Printf("bid by %s for $%.2f failed after all retries: %v\n",
 		req.BidderID, req.Amount, err)
 
-	// Return an error response to the caller but keep the auction running.
 	return PlaceBidResp{
 		Accepted: false,
 		Message:  fmt.Sprintf("bid processing failed: %v", err),
@@ -175,80 +156,11 @@ func (s *AuctionService) CloseAuction(ctx *stateroutine.Context, state BiddingSt
 	}), nil
 }
 
-// --- main ---
-
-func main() {
-	ctx := context.Background()
-
-	svc := &AuctionService{}
-
-	w := stateroutine.NewWorker("auction-queue")
+// RegisterHandlers registers all auction handlers with the worker.
+func RegisterHandlers(w *stateroutine.Worker, svc *AuctionService) {
 	stateroutine.AddHandler(w, svc.OpenAuction, stateroutine.HandlerOptions{})
 	stateroutine.AddCallHandler(w, svc.PlaceBid, stateroutine.HandlerOptions{
 		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
 	}).OnTerminalError(svc.BidFailed)
 	stateroutine.AddHandler(w, svc.CloseAuction, stateroutine.HandlerOptions{})
-
-	go func() {
-		if err := w.Start(); err != nil {
-			log.Fatal(err)
-		}
-	}()
-	defer w.Stop()
-
-	client := stateroutine.NewClient()
-
-	h, err := stateroutine.Start(client, ctx, "auction-001", svc.OpenAuction, AuctionState{
-		ItemName:    "Vintage Guitar",
-		StartingBid: 100.00,
-		Duration:    1 * time.Hour,
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Alice bids $150 — should be accepted.
-	resp, err := stateroutine.ClientCall(client, ctx, "auction-001", svc.PlaceBid, PlaceBidReq{
-		BidderID: "alice",
-		Amount:   150.00,
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("alice's bid: accepted=%v, message=%q\n", resp.Accepted, resp.Message)
-
-	// Bob bids $120 — should be rejected (too low).
-	resp, err = stateroutine.ClientCall(client, ctx, "auction-001", svc.PlaceBid, PlaceBidReq{
-		BidderID: "bob",
-		Amount:   120.00,
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("bob's bid: accepted=%v, message=%q\n", resp.Accepted, resp.Message)
-
-	// Bob bids $200 — should be accepted.
-	resp, err = stateroutine.ClientCall(client, ctx, "auction-001", svc.PlaceBid, PlaceBidReq{
-		BidderID: "bob",
-		Amount:   200.00,
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("bob's bid: accepted=%v, message=%q\n", resp.Accepted, resp.Message)
-
-	// Check current auction status via query.
-	status, err := stateroutine.ClientQuery(client, ctx, "auction-001", AuctionStatusResp{})
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("auction status: leader=%s, highest=$%.2f, bids=%d\n",
-		status.Leader, status.HighestBid, status.BidCount)
-
-	// Wait for the auction to close (in production, the timer would fire).
-	result, err := h.Get(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("auction result: winner=%s, amount=$%.2f\n", result.Winner, result.Amount)
 }

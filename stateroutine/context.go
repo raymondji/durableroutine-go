@@ -8,7 +8,15 @@ type Context struct {
 
 	stateroutineID string
 	spawnRequests  []spawnRequest
+	sendRequests   []sendRequest
 	queryResults   []queryEntry
+}
+
+type sendRequest struct {
+	stateroutineID string
+	stateKind      string
+	msgKind        string
+	msg            any
 }
 
 type spawnRequest struct {
@@ -37,12 +45,23 @@ func (c *Context) Spawn(stateroutineID string, state HandlerState) {
 	})
 }
 
-// Send sends a fire-and-forget message to another stateroutine's inbox.
-// The inbox name is derived from msg.Kind(). It can be called from within
-// any handler to communicate with other running stateroutines.
+// Send buffers a fire-and-forget message to another stateroutine's inbox.
+// The message is delivered by the runtime after the current handler returns its
+// Suspend value, not immediately. The handler parameter is used only for type
+// inference of the target state type — it is not called. Pass the same function
+// registered with AddSendHandler, or pass nil with explicit type parameters when
+// the sender doesn't have access to the receiver's handler function.
 // Maps to a Temporal Signal.
-func Send[M Message](ctx *Context, stateroutineID string, msg M) error {
-	panic("not implemented")
+func Send[S HandlerState, M Message, T any](ctx *Context, stateroutineID string,
+	handler SendFunc[S, M, T], msg M) error {
+	var zeroS S
+	ctx.sendRequests = append(ctx.sendRequests, sendRequest{
+		stateroutineID: stateroutineID,
+		stateKind:      zeroS.Kind(),
+		msgKind:        msg.Kind(),
+		msg:            msg,
+	})
+	return nil
 }
 
 // SetQueryResult stores a static query result that persists across state

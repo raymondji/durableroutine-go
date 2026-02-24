@@ -1,33 +1,16 @@
-// Command batch demonstrates chunked processing of a large dataset using
-// Continue for checkpointing. This pattern keeps the stateroutine responsive to
-// signals between chunks — like a GenServer that processes a batch and then
-// checks its mailbox before continuing:
-//
-//	def handle_info(:process_batch, state) do
-//	  state = process_chunk(state)
-//	  if more_work?(state), do: send(self(), :process_batch)
-//	  {:noreply, state}
-//	end
-//
-// Each chunk runs as its own activity with independent retries. Between
-// chunks, the workflow loop runs — checking for pending signals, handling
-// continue-as-new if history is large, and spawning any requested children.
-//
-// The stateroutine also listens for a cancel signal. If a CancelInbox message
-// arrives between chunks, the stateroutine stops early and reports partial
-// progress. This is only possible because Continue yields control back
-// to the workflow loop between chunks.
-package main
+// Package batch demonstrates chunked batch processing with cancellation.
+// Processes a large dataset in chunks using Select + Default, checking for a
+// cancel signal between chunks. Like a GenServer that checks its mailbox
+// between batches.
+package batch
 
 import (
-	"context"
 	"fmt"
-	"log"
 
 	"github.com/raymondji/stateroutine/stateroutine"
 )
 
-const chunkSize = 100
+const ChunkSize = 100
 
 // --- State ---
 
@@ -83,14 +66,14 @@ func (s *BatchService) ProcessChunk(ctx *stateroutine.Context, state ProcessingS
 }
 
 func (s *BatchService) processChunk(_ *stateroutine.Context, state ProcessingState) (*stateroutine.Suspend[BatchResult], error) {
-	end := state.Offset + chunkSize
+	end := state.Offset + ChunkSize
 	if end > len(state.Items) {
 		end = len(state.Items)
 	}
 
 	// Process this chunk — normal Go code, no replay-safety constraints.
 	for _, item := range state.Items[state.Offset:end] {
-		if err := processItem(item); err != nil {
+		if err := ProcessItem(item); err != nil {
 			state.Errors++
 			fmt.Printf("  error processing %s: %v\n", item, err)
 		} else {
@@ -109,11 +92,6 @@ func (s *BatchService) processChunk(_ *stateroutine.Context, state ProcessingSta
 		return stateroutine.Done(BatchResult{Processed: state.Processed, Errors: state.Errors}), nil
 	}
 
-	// More items to process. Use Select with OnSend + Default so the workflow
-	// loop checks for a cancel signal before processing the next chunk.
-	//
-	// - If no cancel signal is pending: Default fires immediately → next chunk.
-	// - If a cancel signal arrived:     OnSend fires → CancelBatch runs.
 	return stateroutine.Select[BatchResult](
 		stateroutine.OnSend(s.CancelBatch, state),
 		stateroutine.Default(s.ProcessChunk, state),
@@ -126,49 +104,15 @@ func (s *BatchService) CancelBatch(ctx *stateroutine.Context, state ProcessingSt
 	return stateroutine.Done(BatchResult{Processed: state.Processed, Errors: state.Errors, Cancelled: true}), nil
 }
 
-// processItem simulates processing a single item.
-func processItem(item string) error {
+// ProcessItem simulates processing a single item.
+func ProcessItem(item string) error {
 	fmt.Printf("  processing: %s\n", item)
 	return nil
 }
 
-// --- main ---
-
-func main() {
-	ctx := context.Background()
-
-	svc := &BatchService{}
-
-	w := stateroutine.NewWorker("batch-queue")
+// RegisterHandlers registers all batch handlers with the worker.
+func RegisterHandlers(w *stateroutine.Worker, svc *BatchService) {
 	stateroutine.AddHandler(w, svc.StartBatch, stateroutine.HandlerOptions{})
 	stateroutine.AddHandler(w, svc.ProcessChunk, stateroutine.HandlerOptions{})
 	stateroutine.AddSendHandler(w, svc.CancelBatch, stateroutine.HandlerOptions{})
-
-	go func() {
-		if err := w.Start(); err != nil {
-			log.Fatal(err)
-		}
-	}()
-	defer w.Stop()
-
-	client := stateroutine.NewClient()
-
-	// Generate a batch of items.
-	items := make([]string, 350)
-	for i := range items {
-		items[i] = fmt.Sprintf("item-%d", i)
-	}
-
-	h, err := stateroutine.Start(client, ctx, "batch-001", svc.StartBatch, BatchState{Items: items})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Wait for the batch to complete (or be cancelled).
-	result, err := h.Get(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("batch done: %d processed, %d errors, cancelled=%v\n",
-		result.Processed, result.Errors, result.Cancelled)
 }

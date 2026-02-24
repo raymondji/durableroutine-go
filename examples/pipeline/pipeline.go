@@ -1,23 +1,11 @@
-// Command pipeline demonstrates a producer-consumer pattern between two
+// Package pipeline demonstrates a producer-consumer pattern between two
 // durable stateroutines. The producer generates items one at a time and sends
-// each to the consumer via stateroutine.Send — exactly like a goroutine
-// writing to a channel:
-//
-//	ch := make(chan Item)
-//	go producer(ch)           // sends many items
-//	for item := range ch {    // consumer reads one at a time
-//	    process(item)
-//	}
-//
-// The producer and consumer are fully independent durable stateroutines. Either
-// can crash and resume without losing messages (Temporal signals are durable).
+// each to the consumer via stateroutine.Send.
 // Uses struct-based handlers for dependency injection.
-package main
+package pipeline
 
 import (
-	"context"
 	"fmt"
-	"log"
 
 	"github.com/raymondji/stateroutine/stateroutine"
 )
@@ -38,7 +26,7 @@ func (DoneMsg) Kind() string { return "done" }
 // --- State ---
 
 type ProducerState struct {
-	Items             []string
+	Items                  []string
 	ConsumerStateroutineID string
 }
 
@@ -66,13 +54,15 @@ type ProducerService struct {
 func (s *ProducerService) Produce(ctx *stateroutine.Context, state ProducerState) (*stateroutine.Suspend[stateroutine.Unit], error) {
 	for i, data := range state.Items {
 		item := Item{Seq: i, Data: data}
-		if err := stateroutine.Send(ctx, state.ConsumerStateroutineID, item); err != nil {
+		// Use explicit type params with nil handler since the producer doesn't have
+		// access to the consumer's ReceiveItem handler function.
+		if err := stateroutine.Send[ConsumerState, Item, ConsumerResult](ctx, state.ConsumerStateroutineID, nil, item); err != nil {
 			return nil, fmt.Errorf("send item %d: %w", i, err)
 		}
 		fmt.Printf("produced item %d: %s\n", i, data)
 	}
 
-	if err := stateroutine.Send(ctx, state.ConsumerStateroutineID, DoneMsg{}); err != nil {
+	if err := stateroutine.Send[ConsumerState, DoneMsg, ConsumerResult](ctx, state.ConsumerStateroutineID, nil, DoneMsg{}); err != nil {
 		return nil, fmt.Errorf("send done: %w", err)
 	}
 	fmt.Println("producer finished")
@@ -107,48 +97,10 @@ func (s *ConsumerService) ReceiveDone(ctx *stateroutine.Context, state ConsumerS
 	return stateroutine.Done(ConsumerResult{Received: state.Received}), nil
 }
 
-// --- main ---
-
-func main() {
-	ctx := context.Background()
-
-	producerSvc := &ProducerService{}
-	consumerSvc := &ConsumerService{}
-
-	w := stateroutine.NewWorker("pipeline-queue")
+// RegisterHandlers registers all pipeline handlers with the worker.
+func RegisterHandlers(w *stateroutine.Worker, producerSvc *ProducerService, consumerSvc *ConsumerService) {
 	stateroutine.AddHandler(w, producerSvc.Produce, stateroutine.HandlerOptions{})
 	stateroutine.AddHandler(w, consumerSvc.StartConsumer, stateroutine.HandlerOptions{})
 	stateroutine.AddSendHandler(w, consumerSvc.ReceiveItem, stateroutine.HandlerOptions{})
 	stateroutine.AddSendHandler(w, consumerSvc.ReceiveDone, stateroutine.HandlerOptions{})
-
-	go func() {
-		if err := w.Start(); err != nil {
-			log.Fatal(err)
-		}
-	}()
-	defer w.Stop()
-
-	client := stateroutine.NewClient()
-
-	// Start the consumer first so it's ready to receive.
-	consumerH, err := stateroutine.Start(client, ctx, "consumer-1",
-		consumerSvc.StartConsumer, ConsumerState{Name: "my-consumer"})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Start the producer, pointing it at the consumer.
-	if _, err := stateroutine.Start(client, ctx, "producer-1", producerSvc.Produce, ProducerState{
-		Items:             []string{"alpha", "bravo", "charlie", "delta"},
-		ConsumerStateroutineID: "consumer-1",
-	}); err != nil {
-		log.Fatal(err)
-	}
-
-	// Wait for the consumer to finish processing all items.
-	result, err := consumerH.Get(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("consumer received %d items\n", len(result.Received))
 }

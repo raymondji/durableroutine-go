@@ -11,7 +11,7 @@ import (
 // wrapper functions (Start, ClientSend, ClientCall, ClientQuery, ClientGet).
 type Client interface {
 	start(ctx context.Context, id string, kind string, state any) error
-	send(ctx context.Context, id string, inboxName string, msg any) error
+	send(ctx context.Context, id string, stateKind string, msgKind string, msg any) error
 	call(ctx context.Context, id string, methodName string, req any) (any, error)
 	query(ctx context.Context, id string, queryName string) (any, error)
 	get(ctx context.Context, id string) (any, error)
@@ -62,9 +62,14 @@ func Start[S HandlerState, T any](c Client, ctx context.Context, id string, hand
 }
 
 // ClientSend sends a fire-and-forget message to a stateroutine's inbox.
-// The inbox name is derived from msg.Kind().
-func ClientSend[M Message](c Client, ctx context.Context, id string, msg M) error {
-	return c.send(ctx, id, msg.Kind(), msg)
+// The handler parameter is used only for type inference of the target state
+// type — it is not called. Pass the same function registered with
+// AddSendHandler. The state kind and message kind are derived from the handler's
+// type parameters to build the correct routing key.
+func ClientSend[S HandlerState, M Message, T any](c Client, ctx context.Context, id string,
+	handler SendFunc[S, M, T], msg M) error {
+	var zeroS S
+	return c.send(ctx, id, zeroS.Kind(), msg.Kind(), msg)
 }
 
 // ClientCall sends a synchronous request to a stateroutine's method and waits

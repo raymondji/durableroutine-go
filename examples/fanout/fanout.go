@@ -1,22 +1,12 @@
-// Command fanout demonstrates fan-out/fan-in using child stateroutines and
-// stateroutine-to-stateroutine Send, mirroring goroutines and channels:
-//
-//	ch := make(chan Result)
-//	for _, item := range items {
-//	    go func(it Item) { ch <- process(it) }(item)
-//	}
-//	for range items { results = append(results, <-ch) }
-//
-// Each child runs as its own durable stateroutine (Temporal child workflow) with
-// independent retries, timeouts, and event history. Children send results
-// back to the parent via stateroutine.Send — like writing to a channel.
+// Package fanout demonstrates fan-out/fan-in using child stateroutines and
+// stateroutine-to-stateroutine Send. Each child runs as its own durable
+// stateroutine with independent retries, timeouts, and event history. Children
+// send results back to the parent via stateroutine.Send.
 // Uses struct-based handlers for dependency injection.
-package main
+package fanout
 
 import (
-	"context"
 	"fmt"
-	"log"
 
 	"github.com/raymondji/stateroutine/stateroutine"
 )
@@ -115,52 +105,17 @@ func (s *ItemService) ProcessItem(ctx *stateroutine.Context, state ItemState) (*
 	}
 
 	// Send result back to the parent — like ch <- result.
-	if err := stateroutine.Send(ctx, state.ParentID, result); err != nil {
+	// Use explicit type params with nil handler since the child doesn't have
+	// access to the parent's CollectResult handler function.
+	if err := stateroutine.Send[CollectingState, ItemResult, FanoutResult](ctx, state.ParentID, nil, result); err != nil {
 		return nil, fmt.Errorf("send result: %w", err)
 	}
 	return stateroutine.Done(stateroutine.Unit{}), nil
 }
 
-// --- main ---
-
-func main() {
-	ctx := context.Background()
-
-	fanoutSvc := &FanoutService{}
-	itemSvc := &ItemService{}
-
-	w := stateroutine.NewWorker("fanout-queue")
+// RegisterHandlers registers all fanout handlers with the worker.
+func RegisterHandlers(w *stateroutine.Worker, fanoutSvc *FanoutService, itemSvc *ItemService) {
 	stateroutine.AddHandler(w, fanoutSvc.SpawnItems, stateroutine.HandlerOptions{})
 	stateroutine.AddHandler(w, itemSvc.ProcessItem, stateroutine.HandlerOptions{})
 	stateroutine.AddSendHandler(w, fanoutSvc.CollectResult, stateroutine.HandlerOptions{})
-
-	go func() {
-		if err := w.Start(); err != nil {
-			log.Fatal(err)
-		}
-	}()
-	defer w.Stop()
-
-	client := stateroutine.NewClient()
-
-	h, err := stateroutine.Start(client, ctx, "batch-001", fanoutSvc.SpawnItems, FanoutState{
-		Items: []struct {
-			ID   string
-			Data string
-		}{
-			{ID: "1", Data: "foo"},
-			{ID: "2", Data: "bar"},
-			{ID: "3", Data: "baz"},
-		},
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Wait for all children to complete and get collected results.
-	result, err := h.Get(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("fanout complete: %d results\n", len(result.Results))
 }

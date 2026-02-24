@@ -1,4 +1,4 @@
-// Command booking demonstrates a multi-step stateroutine where the client drives
+// Package booking demonstrates a multi-step stateroutine where the client drives
 // each step by sending typed messages. Shows Send + Call + Query together
 // with struct-based dependency injection.
 // Per-step state: BookingState → ReservedState → PaidState.
@@ -6,12 +6,10 @@
 // Also demonstrates OnSendTerminalError: if payment processing fails after
 // all retries, the terminal error handler releases the reservation instead
 // of failing the entire stateroutine.
-package main
+package booking
 
 import (
-	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/raymondji/stateroutine/stateroutine"
@@ -138,14 +136,8 @@ func (s *BookingService) ExpireShipping(ctx *stateroutine.Context, _ PaidState) 
 	return stateroutine.Done(BookingResult{Status: "refunded"}), nil
 }
 
-// --- main ---
-
-func main() {
-	ctx := context.Background()
-
-	svc := &BookingService{}
-
-	w := stateroutine.NewWorker("booking-queue")
+// RegisterHandlers registers all booking handlers with the worker.
+func RegisterHandlers(w *stateroutine.Worker, svc *BookingService) {
 	stateroutine.AddHandler(w, svc.ReserveItem, stateroutine.HandlerOptions{
 		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 5},
 	})
@@ -158,51 +150,4 @@ func main() {
 	stateroutine.AddCallHandler(w, svc.CancelBooking, stateroutine.HandlerOptions{})
 	stateroutine.AddHandler(w, svc.ExpireReservation, stateroutine.HandlerOptions{})
 	stateroutine.AddHandler(w, svc.ExpireShipping, stateroutine.HandlerOptions{})
-
-	go func() {
-		if err := w.Start(); err != nil {
-			log.Fatal(err)
-		}
-	}()
-	defer w.Stop()
-
-	client := stateroutine.NewClient()
-
-	// Start the booking stateroutine.
-	h, err := stateroutine.Start(client, ctx, "booking-123", svc.ReserveItem,
-		BookingState{UserID: "user-42", ItemID: "SKU-900"})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Query the current status.
-	status, err := stateroutine.ClientQuery(client, ctx, "booking-123", StatusResp{})
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("status: %s\n", status.Status)
-
-	// Send payment info.
-	if err := stateroutine.ClientSend(client, ctx, "booking-123", PaymentInfo{
-		CardNumber: "4111111111111234",
-		Expiry:     "12/27",
-	}); err != nil {
-		log.Fatal(err)
-	}
-
-	// Send shipping info.
-	if err := stateroutine.ClientSend(client, ctx, "booking-123", ShippingInfo{
-		Address: "123 Main St",
-		City:    "Springfield",
-		Zip:     "62704",
-	}); err != nil {
-		log.Fatal(err)
-	}
-
-	// Wait for the stateroutine to complete and get the result.
-	result, err := h.Get(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("booking result: %s\n", result.Status)
 }
