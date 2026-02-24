@@ -64,6 +64,65 @@ func Send[S HandlerState, M Message, T any](ctx *Context, stateroutineID string,
 	return nil
 }
 
+// NewContext creates a new stateroutine Context. Exported for use by
+// implementation packages (temporalimpl).
+func NewContext(ctx context.Context, stateroutineID string) *Context {
+	return &Context{Context: ctx, stateroutineID: stateroutineID}
+}
+
+// QueryResults returns the accumulated query results.
+func (c *Context) QueryResults() []QueryEntry {
+	out := make([]QueryEntry, len(c.queryResults))
+	for i, e := range c.queryResults {
+		out[i] = QueryEntry{QueryName: e.queryName, Result: e.result}
+	}
+	return out
+}
+
+// SpawnRequests returns the accumulated spawn requests.
+func (c *Context) SpawnRequests() []SpawnEntry {
+	out := make([]SpawnEntry, len(c.spawnRequests))
+	for i, e := range c.spawnRequests {
+		out[i] = SpawnEntry{StateroutineID: e.stateroutineID, StateKind: e.state.Kind(), State: e.state}
+	}
+	return out
+}
+
+// SendRequests returns the accumulated send requests.
+func (c *Context) SendRequests() []SendEntry {
+	out := make([]SendEntry, len(c.sendRequests))
+	for i, e := range c.sendRequests {
+		out[i] = SendEntry{
+			StateroutineID: e.stateroutineID,
+			StateKind:      e.stateKind,
+			MsgKind:        e.msgKind,
+			Msg:            e.msg,
+		}
+	}
+	return out
+}
+
+// QueryEntry is the exported view of a query result.
+type QueryEntry struct {
+	QueryName string
+	Result    any
+}
+
+// SpawnEntry is the exported view of a spawn request.
+type SpawnEntry struct {
+	StateroutineID string
+	StateKind      string
+	State          any
+}
+
+// SendEntry is the exported view of a send request.
+type SendEntry struct {
+	StateroutineID string
+	StateKind      string
+	MsgKind        string
+	Msg            any
+}
+
 // SetQueryResult stores a static query result that persists across state
 // transitions until overridden by another call to SetQueryResult with the
 // same Resp type. The result is keyed by resp.Kind(). Clients retrieve the

@@ -16,12 +16,22 @@ func NewWorker(taskQueue string) *Worker {
 	}
 }
 
-// Start begins polling. It blocks until Stop is called or an error occurs.
-func (w *Worker) Start() error {
-	panic("not implemented")
+// TaskQueue returns the task queue name.
+func (w *Worker) TaskQueue() string {
+	return w.taskQueue
 }
 
-// Stop gracefully shuts down the worker.
-func (w *Worker) Stop() {
-	panic("not implemented")
+// Handlers returns the handler registry.
+func (w *Worker) Handlers() map[string]HandlerEntry {
+	out := make(map[string]HandlerEntry, len(w.handlers))
+	for k, e := range w.handlers {
+		out[k] = HandlerEntry{Handler: e.handler, Options: e.options}
+	}
+	return out
+}
+
+// HandlerEntry is the exported view of a registered handler with its options.
+type HandlerEntry struct {
+	Handler any
+	Options HandlerOptions
 }

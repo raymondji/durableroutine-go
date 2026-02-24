@@ -122,3 +122,32 @@ func Default[S HandlerState, T any](handler HandlerFunc[S, T], state S) Case {
 		handlerKey: "handler:" + state.Kind(),
 	}
 }
+
+// ─── Exported accessors for implementation packages ───
+
+// IsDone returns true if the Suspend completes the stateroutine.
+func (s *Suspend[T]) IsDone() bool { return s.done }
+
+// Result returns the stateroutine result (only meaningful when IsDone is true).
+func (s *Suspend[T]) Result() T { return s.result }
+
+// Cases returns the wait conditions.
+func (s *Suspend[T]) Cases() []Case { return s.cases }
+
+// TimerDuration returns the timer duration, or nil if this is not a timer case.
+func (c Case) TimerDuration() *time.Duration { return c.timerDuration }
+
+// SendName returns the send name, or "" if this is not a send case.
+func (c Case) SendName() string { return c.sendName }
+
+// CallName returns the call name, or "" if this is not a call case.
+func (c Case) CallName() string { return c.callName }
+
+// Immediate returns true if this case fires without waiting.
+func (c Case) Immediate() bool { return c.immediate }
+
+// State returns the handler state for this case.
+func (c Case) State() any { return c.state }
+
+// HandlerKey returns the composite handler lookup key.
+func (c Case) HandlerKey() string { return c.handlerKey }

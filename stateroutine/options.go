@@ -23,3 +23,9 @@ type HandlerOptions struct {
 	RetryPolicy        RetryPolicy
 	onTerminalErrorKey string // set internally by OnTerminalError; looked up in worker handlers
 }
+
+// OnTerminalErrorKey returns the handler key for the terminal error handler,
+// or "" if none is registered.
+func (o HandlerOptions) OnTerminalErrorKey() string {
+	return o.onTerminalErrorKey
+}

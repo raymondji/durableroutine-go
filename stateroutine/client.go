@@ -3,6 +3,7 @@ package stateroutine
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 )
 
@@ -17,10 +18,40 @@ type Client interface {
 	get(ctx context.Context, id string) (any, error)
 }
 
-// NewClient creates a Client backed by Temporal.
-// TODO: accept Temporal connection options.
-func NewClient() Client {
-	panic("not implemented")
+// ClientImpl is the exported interface that implementation packages
+// (e.g., temporalimpl) implement. Use NewClientFrom to wrap a ClientImpl
+// into a Client usable with the typed wrapper functions.
+type ClientImpl interface {
+	Start(ctx context.Context, id string, kind string, state any) error
+	Send(ctx context.Context, id string, stateKind string, msgKind string, msg any) error
+	Call(ctx context.Context, id string, stateKind string, reqKind string, req any) (any, error)
+	Query(ctx context.Context, id string, queryName string) (any, error)
+	Get(ctx context.Context, id string) (any, error)
+}
+
+// NewClientFrom wraps a ClientImpl into a Client.
+func NewClientFrom(impl ClientImpl) Client {
+	return &clientBridge{impl: impl}
+}
+
+type clientBridge struct {
+	impl ClientImpl
+}
+
+func (b *clientBridge) start(ctx context.Context, id string, kind string, state any) error {
+	return b.impl.Start(ctx, id, kind, state)
+}
+func (b *clientBridge) send(ctx context.Context, id string, stateKind string, msgKind string, msg any) error {
+	return b.impl.Send(ctx, id, stateKind, msgKind, msg)
+}
+func (b *clientBridge) call(ctx context.Context, id string, stateKind string, reqKind string, req any) (any, error) {
+	return b.impl.Call(ctx, id, stateKind, reqKind, req)
+}
+func (b *clientBridge) query(ctx context.Context, id string, queryName string) (any, error) {
+	return b.impl.Query(ctx, id, queryName)
+}
+func (b *clientBridge) get(ctx context.Context, id string) (any, error) {
+	return b.impl.Get(ctx, id)
 }
 
 // Handle is a typed reference to a running stateroutine. It is returned by Start
@@ -39,7 +70,7 @@ func (h Handle[T]) Get(ctx context.Context) (T, error) {
 		var zero T
 		return zero, err
 	}
-	return raw.(T), nil
+	return convertResult[T](raw)
 }
 
 // Start begins a new instance of a stateroutine. The state.Kind() determines which
@@ -85,7 +116,7 @@ func ClientCall[S HandlerState, Req Message, Resp any, T any](c Client, ctx cont
 		var zero Resp
 		return zero, err
 	}
-	return raw.(Resp), nil
+	return convertResult[Resp](raw)
 }
 
 // ClientQuery retrieves a static query result from a stateroutine.
@@ -97,7 +128,7 @@ func ClientQuery[Resp Message](c Client, ctx context.Context, id string, resp Re
 		var zero Resp
 		return zero, err
 	}
-	return raw.(Resp), nil
+	return convertResult[Resp](raw)
 }
 
 // ClientGet retrieves the result of a completed stateroutine by ID. Blocks until
@@ -110,7 +141,26 @@ func ClientGet[T any](c Client, ctx context.Context, id string) (T, error) {
 		var zero T
 		return zero, err
 	}
-	return raw.(T), nil
+	return convertResult[T](raw)
+}
+
+// convertResult converts a raw value (which may be map[string]interface{} from
+// JSON deserialization) into the target type T via JSON round-trip if needed.
+func convertResult[T any](raw any) (T, error) {
+	if typed, ok := raw.(T); ok {
+		return typed, nil
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		var zero T
+		return zero, fmt.Errorf("marshal result: %w", err)
+	}
+	var result T
+	if err := json.Unmarshal(data, &result); err != nil {
+		var zero T
+		return zero, fmt.Errorf("unmarshal result into %T: %w", result, err)
+	}
+	return result, nil
 }
 
 // newUUID generates a random v4 UUID string.
