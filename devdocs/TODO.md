@@ -2,6 +2,10 @@
 
 These are ready for Claude to work on.
 
+## Acknowledge inspiration from indeed workflow framework and add comparison
+
+https://github.com/indeedeng/iwf
+
 # Draft TODOs
 
 These are not ready for Claude to work on yet.

@@ -35,16 +35,26 @@ func (FinalState) Kind() string { return "reminder.final" }
 
 type ReminderService struct {
 	// Injected dependencies would go here (e.g., email client).
+	InitialDelay  time.Duration // if zero, defaults to 24h
+	FollowUpDelay time.Duration // if zero, defaults to 7 days
 }
 
 func (s *ReminderService) SendInitial(ctx *stateroutine.Context, state InitialState) (*stateroutine.Suspend[stateroutine.Unit], error) {
 	fmt.Printf("sending initial email to %s\n", state.Email)
-	return stateroutine.After(24*time.Hour, s.SendFollowUp, FollowUpState{Email: state.Email}), nil
+	delay := 24 * time.Hour
+	if s.InitialDelay > 0 {
+		delay = s.InitialDelay
+	}
+	return stateroutine.After(delay, s.SendFollowUp, FollowUpState{Email: state.Email}), nil
 }
 
 func (s *ReminderService) SendFollowUp(ctx *stateroutine.Context, state FollowUpState) (*stateroutine.Suspend[stateroutine.Unit], error) {
 	fmt.Printf("sending follow-up email to %s\n", state.Email)
-	return stateroutine.After(7*24*time.Hour, s.SendFinal, FinalState{Email: state.Email}), nil
+	delay := 7 * 24 * time.Hour
+	if s.FollowUpDelay > 0 {
+		delay = s.FollowUpDelay
+	}
+	return stateroutine.After(delay, s.SendFinal, FinalState{Email: state.Email}), nil
 }
 
 func (s *ReminderService) SendFinal(ctx *stateroutine.Context, state FinalState) (*stateroutine.Suspend[stateroutine.Unit], error) {

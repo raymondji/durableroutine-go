@@ -166,6 +166,6 @@ func RegisterHandlers(w *stateroutine.Worker, svc *AuctionService) {
 	stateroutine.AddHandler(w, svc.OpenAuction, stateroutine.HandlerOptions{})
 	stateroutine.AddCallHandler(w, svc.PlaceBid, stateroutine.HandlerOptions{
 		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
-	}).OnTerminalError(svc.BidFailed)
+	}).OnTerminalError(svc.BidFailed, stateroutine.HandlerOptions{})
 	stateroutine.AddHandler(w, svc.CloseAuction, stateroutine.HandlerOptions{})
 }

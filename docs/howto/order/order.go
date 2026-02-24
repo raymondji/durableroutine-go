@@ -64,13 +64,19 @@ func (PlacedState) Kind() string { return "order.placed" }
 
 type OrderService struct {
 	// Injected dependencies would go here.
+	ExpireTimeout time.Duration // if zero, defaults to 30min
+	ShipTimeout   time.Duration // if zero, defaults to 24h
 }
 
 func (s *OrderService) CreateOrder(ctx *stateroutine.Context, _ OrderState) (*stateroutine.Suspend[OrderResult], error) {
 	stateroutine.SetQueryResult(ctx, StatusResp{Status: "pending"})
+	expireTimeout := 30 * time.Minute
+	if s.ExpireTimeout > 0 {
+		expireTimeout = s.ExpireTimeout
+	}
 	return stateroutine.Select[OrderResult](
 		stateroutine.OnSend(s.PlaceOrder, PendingState{}),
-		stateroutine.OnTimer(30*time.Minute, s.ExpireOrder, PendingState{}),
+		stateroutine.OnTimer(expireTimeout, s.ExpireOrder, PendingState{}),
 	), nil
 }
 
@@ -78,10 +84,14 @@ func (s *OrderService) PlaceOrder(ctx *stateroutine.Context, _ PendingState, req
 	fmt.Printf("placing order %s\n", req.OrderID)
 	placed := PlacedState{OrderID: req.OrderID, Items: req.Items}
 
+	shipTimeout := 24 * time.Hour
+	if s.ShipTimeout > 0 {
+		shipTimeout = s.ShipTimeout
+	}
 	stateroutine.SetQueryResult(ctx, StatusResp{Status: "placed", OrderID: req.OrderID})
 	return stateroutine.Select[OrderResult](
 		stateroutine.OnSend(s.CancelOrder, placed),
-		stateroutine.OnTimer(24*time.Hour, s.ShipOrder, placed),
+		stateroutine.OnTimer(shipTimeout, s.ShipOrder, placed),
 	), nil
 }
 

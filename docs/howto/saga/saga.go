@@ -57,6 +57,9 @@ type TripResult struct {
 
 type TripService struct {
 	// Injected dependencies would go here (e.g., flight/hotel/car API clients).
+	BookFlightFn func(ctx context.Context, flightID string) (string, error) // if non-nil, replaces default
+	BookHotelFn  func(ctx context.Context, hotelID string) (string, error)  // if non-nil, replaces default
+	BookCarFn    func(ctx context.Context, carID string) (string, error)    // if non-nil, replaces default
 }
 
 func (s *TripService) BookFlight(ctx *stateroutine.Context, state TripState) (*stateroutine.Suspend[TripResult], error) {
@@ -116,21 +119,30 @@ func (s *TripService) CompensateCar(ctx *stateroutine.Context, state HotelBooked
 
 // --- Service calls (replace with real API clients) ---
 
-func (s *TripService) bookFlight(_ context.Context, flightID string) (string, error) {
+func (s *TripService) bookFlight(ctx context.Context, flightID string) (string, error) {
+	if s.BookFlightFn != nil {
+		return s.BookFlightFn(ctx, flightID)
+	}
 	if flightID == "" {
 		return "", errors.New("flight ID required")
 	}
 	return "FLIGHT-CONF-" + flightID, nil
 }
 
-func (s *TripService) bookHotel(_ context.Context, hotelID string) (string, error) {
+func (s *TripService) bookHotel(ctx context.Context, hotelID string) (string, error) {
+	if s.BookHotelFn != nil {
+		return s.BookHotelFn(ctx, hotelID)
+	}
 	if hotelID == "" {
 		return "", errors.New("hotel ID required")
 	}
 	return "HOTEL-CONF-" + hotelID, nil
 }
 
-func (s *TripService) bookCar(_ context.Context, carID string) (string, error) {
+func (s *TripService) bookCar(ctx context.Context, carID string) (string, error) {
+	if s.BookCarFn != nil {
+		return s.BookCarFn(ctx, carID)
+	}
 	if carID == "" {
 		return "", errors.New("car rental ID required")
 	}
@@ -152,8 +164,12 @@ func RegisterHandlers(w *stateroutine.Worker, svc *TripService) {
 	})
 	stateroutine.AddHandler(w, svc.BookHotel, stateroutine.HandlerOptions{
 		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
-	}).OnTerminalError(svc.CompensateHotel)
+	}).OnTerminalError(svc.CompensateHotel, stateroutine.HandlerOptions{
+		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 1},
+	})
 	stateroutine.AddHandler(w, svc.BookCar, stateroutine.HandlerOptions{
 		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
-	}).OnTerminalError(svc.CompensateCar)
+	}).OnTerminalError(svc.CompensateCar, stateroutine.HandlerOptions{
+		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 1},
+	})
 }

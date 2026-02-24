@@ -64,9 +64,9 @@ func addEntry(w *Worker, key string, handler any, opts HandlerOptions) {
 	w.handlers[key] = handlerEntry{handler: handler, options: opts}
 }
 
-func registerTerminalError(w *Worker, primaryKey string, teHandler any) {
+func registerTerminalError(w *Worker, primaryKey string, teHandler any, opts HandlerOptions) {
 	errorKey := "error:" + primaryKey
-	w.handlers[errorKey] = handlerEntry{handler: teHandler}
+	w.handlers[errorKey] = handlerEntry{handler: teHandler, options: opts}
 	entry := w.handlers[primaryKey]
 	entry.options.onTerminalErrorKey = errorKey
 	w.handlers[primaryKey] = entry
@@ -84,8 +84,8 @@ type handlerReg[S HandlerState, T any] struct {
 // after all retries in the RetryPolicy are exhausted, instead of failing
 // the stateroutine. The terminal error handler must have the same State and
 // Result types as the main handler.
-func (r handlerReg[S, T]) OnTerminalError(te TerminalErrorFunc[S, T]) {
-	registerTerminalError(r.w, r.key, te)
+func (r handlerReg[S, T]) OnTerminalError(te TerminalErrorFunc[S, T], opts HandlerOptions) {
+	registerTerminalError(r.w, r.key, te, opts)
 }
 
 // sendHandlerReg is returned by AddSendHandler to allow chaining .OnTerminalError().
@@ -98,8 +98,8 @@ type sendHandlerReg[S HandlerState, M Message, T any] struct {
 // after all retries in the RetryPolicy are exhausted, instead of failing
 // the stateroutine. The terminal error handler must have the same State, Message,
 // and Result types as the main handler.
-func (r sendHandlerReg[S, M, T]) OnTerminalError(te SendTerminalErrorFunc[S, M, T]) {
-	registerTerminalError(r.w, r.key, te)
+func (r sendHandlerReg[S, M, T]) OnTerminalError(te SendTerminalErrorFunc[S, M, T], opts HandlerOptions) {
+	registerTerminalError(r.w, r.key, te, opts)
 }
 
 // callHandlerReg is returned by AddCallHandler to allow chaining .OnTerminalError().
@@ -112,8 +112,8 @@ type callHandlerReg[S HandlerState, Req Message, Resp any, T any] struct {
 // after all retries in the RetryPolicy are exhausted, instead of failing
 // the stateroutine. The terminal error handler must have the same State, Request,
 // Response, and Result types as the main handler.
-func (r callHandlerReg[S, Req, Resp, T]) OnTerminalError(te CallTerminalErrorFunc[S, Req, Resp, T]) {
-	registerTerminalError(r.w, r.key, te)
+func (r callHandlerReg[S, Req, Resp, T]) OnTerminalError(te CallTerminalErrorFunc[S, Req, Resp, T], opts HandlerOptions) {
+	registerTerminalError(r.w, r.key, te, opts)
 }
 
 // ─── Add* registration functions ───

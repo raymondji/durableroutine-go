@@ -81,28 +81,44 @@ func (PaidState) Kind() string { return "booking.paid" }
 
 type BookingService struct {
 	// Injected dependencies would go here (e.g., DB, payment gateway).
+	ReservationTimeout time.Duration         // if zero, defaults to 15min
+	ShippingTimeout    time.Duration         // if zero, defaults to 24h
+	ChargeCardFn       func(string) error    // if non-nil, called during payment processing
 }
 
 func (s *BookingService) ReserveItem(ctx *stateroutine.Context, state BookingState) (*stateroutine.Suspend[BookingResult], error) {
 	fmt.Printf("reserving item %s for user %s\n", state.ItemID, state.UserID)
 	reserved := ReservedState{UserID: state.UserID, ItemID: state.ItemID}
 
+	reservationTimeout := 15 * time.Minute
+	if s.ReservationTimeout > 0 {
+		reservationTimeout = s.ReservationTimeout
+	}
 	stateroutine.SetQueryResult(ctx, StatusResp{Status: "reserved"})
 	return stateroutine.Select[BookingResult](
 		stateroutine.OnSend(s.ProcessPayment, reserved),
 		stateroutine.OnCall(s.CancelBooking, reserved),
-		stateroutine.OnTimer(15*time.Minute, s.ExpireReservation, reserved),
+		stateroutine.OnTimer(reservationTimeout, s.ExpireReservation, reserved),
 	), nil
 }
 
 func (s *BookingService) ProcessPayment(ctx *stateroutine.Context, state ReservedState, msg PaymentInfo) (*stateroutine.Suspend[BookingResult], error) {
+	if s.ChargeCardFn != nil {
+		if err := s.ChargeCardFn(msg.CardNumber); err != nil {
+			return nil, fmt.Errorf("charge card: %w", err)
+		}
+	}
 	fmt.Printf("charging card ending in %s\n", msg.CardNumber[len(msg.CardNumber)-4:])
 	paid := PaidState{UserID: state.UserID, ItemID: state.ItemID, PaymentID: "PAY-123"}
 
+	shippingTimeout := 24 * time.Hour
+	if s.ShippingTimeout > 0 {
+		shippingTimeout = s.ShippingTimeout
+	}
 	stateroutine.SetQueryResult(ctx, StatusResp{Status: "paid", PaymentID: paid.PaymentID})
 	return stateroutine.Select[BookingResult](
 		stateroutine.OnSend(s.ProcessShipping, paid),
-		stateroutine.OnTimer(24*time.Hour, s.ExpireShipping, paid),
+		stateroutine.OnTimer(shippingTimeout, s.ExpireShipping, paid),
 	), nil
 }
 
@@ -143,7 +159,7 @@ func RegisterHandlers(w *stateroutine.Worker, svc *BookingService) {
 	})
 	stateroutine.AddSendHandler(w, svc.ProcessPayment, stateroutine.HandlerOptions{
 		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
-	}).OnTerminalError(svc.PaymentFailed)
+	}).OnTerminalError(svc.PaymentFailed, stateroutine.HandlerOptions{})
 	stateroutine.AddSendHandler(w, svc.ProcessShipping, stateroutine.HandlerOptions{
 		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
 	})
