@@ -112,9 +112,9 @@ func (s *OrderService) ExpireOrder(ctx *stateroutine.Context, _ PendingState) (*
 
 // RegisterHandlers registers all order handlers with the worker.
 func RegisterHandlers(w *stateroutine.Worker, svc *OrderService) {
-	stateroutine.AddHandler(w, svc.CreateOrder, stateroutine.HandlerOptions{})
-	stateroutine.AddSendHandler(w, svc.PlaceOrder, stateroutine.HandlerOptions{})
-	stateroutine.AddSendHandler(w, svc.CancelOrder, stateroutine.HandlerOptions{})
-	stateroutine.AddHandler(w, svc.ShipOrder, stateroutine.HandlerOptions{})
-	stateroutine.AddHandler(w, svc.ExpireOrder, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, svc.CreateOrder, stateroutine.HandlerOptions{})
+	stateroutine.RegisterSendHandler(w, svc.PlaceOrder, stateroutine.HandlerOptions{})
+	stateroutine.RegisterSendHandler(w, svc.CancelOrder, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, svc.ShipOrder, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, svc.ExpireOrder, stateroutine.HandlerOptions{})
 }

@@ -5,12 +5,21 @@ import (
 	"fmt"
 	"log"
 
+	temporalclient "go.temporal.io/sdk/client"
+
 	"github.com/raymondji/stateroutine/docs/howto/fanout"
 	"github.com/raymondji/stateroutine/stateroutine"
+	"github.com/raymondji/stateroutine/temporalimpl"
 )
 
 func main() {
 	ctx := context.Background()
+
+	tc, err := temporalclient.Dial(temporalclient.Options{HostPort: "localhost:7233"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer tc.Close()
 
 	fanoutSvc := &fanout.FanoutService{}
 	itemSvc := &fanout.ItemService{}
@@ -18,14 +27,15 @@ func main() {
 	w := stateroutine.NewWorker("fanout-queue")
 	fanout.RegisterHandlers(w, fanoutSvc, itemSvc)
 
+	tw := temporalimpl.NewWorker(tc, w)
 	go func() {
-		if err := w.Start(); err != nil {
+		if err := tw.Start(); err != nil {
 			log.Fatal(err)
 		}
 	}()
-	defer w.Stop()
+	defer tw.Stop()
 
-	client := stateroutine.NewClient()
+	client := stateroutine.NewClientFrom(temporalimpl.NewClient(tc, "fanout-queue"))
 
 	h, err := stateroutine.Start(client, ctx, "batch-001", fanoutSvc.SpawnItems, fanout.FanoutState{
 		Items: []struct {

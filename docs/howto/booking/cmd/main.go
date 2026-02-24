@@ -5,26 +5,36 @@ import (
 	"fmt"
 	"log"
 
+	temporalclient "go.temporal.io/sdk/client"
+
 	"github.com/raymondji/stateroutine/docs/howto/booking"
 	"github.com/raymondji/stateroutine/stateroutine"
+	"github.com/raymondji/stateroutine/temporalimpl"
 )
 
 func main() {
 	ctx := context.Background()
+
+	tc, err := temporalclient.Dial(temporalclient.Options{HostPort: "localhost:7233"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer tc.Close()
 
 	svc := &booking.BookingService{}
 
 	w := stateroutine.NewWorker("booking-queue")
 	booking.RegisterHandlers(w, svc)
 
+	tw := temporalimpl.NewWorker(tc, w)
 	go func() {
-		if err := w.Start(); err != nil {
+		if err := tw.Start(); err != nil {
 			log.Fatal(err)
 		}
 	}()
-	defer w.Stop()
+	defer tw.Stop()
 
-	client := stateroutine.NewClient()
+	client := stateroutine.NewClientFrom(temporalimpl.NewClient(tc, "booking-queue"))
 
 	// Start the booking stateroutine.
 	h, err := stateroutine.Start(client, ctx, "booking-123", svc.ReserveItem,

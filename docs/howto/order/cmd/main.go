@@ -5,26 +5,36 @@ import (
 	"fmt"
 	"log"
 
+	temporalclient "go.temporal.io/sdk/client"
+
 	"github.com/raymondji/stateroutine/docs/howto/order"
 	"github.com/raymondji/stateroutine/stateroutine"
+	"github.com/raymondji/stateroutine/temporalimpl"
 )
 
 func main() {
 	ctx := context.Background()
+
+	tc, err := temporalclient.Dial(temporalclient.Options{HostPort: "localhost:7233"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer tc.Close()
 
 	svc := &order.OrderService{}
 
 	w := stateroutine.NewWorker("order-queue")
 	order.RegisterHandlers(w, svc)
 
+	tw := temporalimpl.NewWorker(tc, w)
 	go func() {
-		if err := w.Start(); err != nil {
+		if err := tw.Start(); err != nil {
 			log.Fatal(err)
 		}
 	}()
-	defer w.Stop()
+	defer tw.Stop()
 
-	client := stateroutine.NewClient()
+	client := stateroutine.NewClientFrom(temporalimpl.NewClient(tc, "order-queue"))
 
 	h, err := stateroutine.Start(client, ctx, "order-123", svc.CreateOrder, order.OrderState{})
 	if err != nil {

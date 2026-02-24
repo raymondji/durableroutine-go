@@ -76,9 +76,9 @@ func TestReminderEndToEnd(t *testing.T) {
 	svc := &reminderService{}
 
 	w := stateroutine.NewWorker(taskQueue)
-	stateroutine.AddHandler(w, svc.SendInitial, stateroutine.HandlerOptions{})
-	stateroutine.AddHandler(w, svc.SendFollowUp, stateroutine.HandlerOptions{})
-	stateroutine.AddHandler(w, svc.SendFinal, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, svc.SendInitial, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, svc.SendFollowUp, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, svc.SendFinal, stateroutine.HandlerOptions{})
 
 	tw := temporalimpl.NewWorker(tc, w)
 	go func() {
@@ -128,7 +128,7 @@ func TestSimpleDone(t *testing.T) {
 	taskQueue := uniqueTaskQueue(t)
 
 	w := stateroutine.NewWorker(taskQueue)
-	stateroutine.AddHandler(w, simpleHandler, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, simpleHandler, stateroutine.HandlerOptions{})
 
 	tw := temporalimpl.NewWorker(tc, w)
 	go func() {
@@ -187,7 +187,7 @@ func TestQueryResult(t *testing.T) {
 	taskQueue := uniqueTaskQueue(t)
 
 	w := stateroutine.NewWorker(taskQueue)
-	stateroutine.AddHandler(w, queryHandler, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, queryHandler, stateroutine.HandlerOptions{})
 
 	tw := temporalimpl.NewWorker(tc, w)
 	go func() {
@@ -258,8 +258,8 @@ func TestSendSignal(t *testing.T) {
 	svc := &sendService{}
 
 	w := stateroutine.NewWorker(taskQueue)
-	stateroutine.AddHandler(w, svc.WaitForMsg, stateroutine.HandlerOptions{})
-	stateroutine.AddSendHandler(w, svc.HandleMsg, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, svc.WaitForMsg, stateroutine.HandlerOptions{})
+	stateroutine.RegisterSendHandler(w, svc.HandleMsg, stateroutine.HandlerOptions{})
 
 	tw := temporalimpl.NewWorker(tc, w)
 	go func() {
@@ -373,10 +373,10 @@ func TestContinueAsNew(t *testing.T) {
 	svc := &canService{}
 
 	w := stateroutine.NewWorker(taskQueue)
-	stateroutine.AddHandler(w, svc.Count, stateroutine.HandlerOptions{})
-	stateroutine.AddHandler(w, svc.Wait, stateroutine.HandlerOptions{})
-	stateroutine.AddSendHandler(w, svc.RecvMsg, stateroutine.HandlerOptions{})
-	stateroutine.AddCallHandler(w, svc.HandleCall, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, svc.Count, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, svc.Wait, stateroutine.HandlerOptions{})
+	stateroutine.RegisterSendHandler(w, svc.RecvMsg, stateroutine.HandlerOptions{})
+	stateroutine.RegisterCallHandler(w, svc.HandleCall, stateroutine.HandlerOptions{})
 
 	tw := temporalimpl.NewWorker(tc, w)
 	go func() {

@@ -159,17 +159,17 @@ func (s *TripService) cancelHotel(_ context.Context, confirmation string) {
 
 // RegisterHandlers registers all saga handlers with the worker.
 func RegisterHandlers(w *stateroutine.Worker, svc *TripService) {
-	stateroutine.AddHandler(w, svc.BookFlight, stateroutine.HandlerOptions{
+	stateroutine.RegisterHandler(w, svc.BookFlight, stateroutine.HandlerOptions{
 		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
 	})
-	stateroutine.AddHandler(w, svc.BookHotel, stateroutine.HandlerOptions{
+	stateroutine.RegisterHandler(w, svc.BookHotel, stateroutine.HandlerOptions{
 		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
-	}).OnTerminalError(svc.CompensateHotel, stateroutine.HandlerOptions{
+	}).WithTerminalErrorHandler(svc.CompensateHotel, stateroutine.HandlerOptions{
 		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 1},
 	})
-	stateroutine.AddHandler(w, svc.BookCar, stateroutine.HandlerOptions{
+	stateroutine.RegisterHandler(w, svc.BookCar, stateroutine.HandlerOptions{
 		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
-	}).OnTerminalError(svc.CompensateCar, stateroutine.HandlerOptions{
+	}).WithTerminalErrorHandler(svc.CompensateCar, stateroutine.HandlerOptions{
 		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 1},
 	})
 }

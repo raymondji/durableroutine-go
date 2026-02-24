@@ -374,7 +374,7 @@ func lookupTerminalErrorKey(handlerKey string) string {
 	if !ok {
 		return ""
 	}
-	teKey := entry.options.OnTerminalErrorKey()
+	teKey := entry.options.WithTerminalErrorHandlerKey()
 	if teKey == "" {
 		return ""
 	}

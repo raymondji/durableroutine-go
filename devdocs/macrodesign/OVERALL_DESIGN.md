@@ -100,24 +100,24 @@ The API is defined in the [`stateroutine/`](stateroutine/) package:
 
 - **`RetryPolicy`** — configures retry behavior (max attempts, intervals, backoff, timeouts).
 - **`HandlerOptions`** — required parameter on all `Add*` registration functions. Contains a `RetryPolicy` field. Use `HandlerOptions{}` for Temporal defaults.
-- **Terminal error handlers** — registered via the `.OnTerminalError()` builder method on the registration returned by each `Add*` function. This enforces at most one terminal error handler at compile time. Invoked only after all retries in the RetryPolicy are exhausted, instead of failing the stateroutine.
+- **Terminal error handlers** — registered via the `.WithTerminalErrorHandler()` builder method on the registration returned by each `Add*` function. This enforces at most one terminal error handler at compile time. Invoked only after all retries in the RetryPolicy are exhausted, instead of failing the stateroutine.
 
 Terminal error handlers share the same generic type parameters as the main handler, so Go enforces type safety at compile time:
 - A `TerminalErrorFunc[S, T]` chained on `AddHandler` must match the handler's `S` and `T`.
 - A `SendTerminalErrorFunc[S, M, T]` chained on `AddSendHandler` must match the handler's `S`, `M`, and `T`.
 - A `CallTerminalErrorFunc[S, Req, Resp, T]` chained on `AddCallHandler` must match the handler's `S`, `Req`, `Resp`, and `T`.
 
-Passing the wrong kind of terminal error handler (e.g., a `SendTerminalErrorFunc` to `AddHandler`'s `.OnTerminalError()`) is a compile-time error because the function signatures are incompatible.
+Passing the wrong kind of terminal error handler (e.g., a `SendTerminalErrorFunc` to `AddHandler`'s `.WithTerminalErrorHandler()`) is a compile-time error because the function signatures are incompatible.
 
 Retry policies are set at handler registration level only, not on individual suspend cases.
 
 #### Handler Registration
 
-Because Go does not allow type parameters on methods, these are package-level functions that take `*Worker`. All require `HandlerOptions` and return a typed registration struct with an `OnTerminalError` method:
+Because Go does not allow type parameters on methods, these are package-level functions that take `*Worker`. All require `HandlerOptions` and return a typed registration struct with an `WithTerminalErrorHandler` method:
 
-- **`AddHandler[S, T](w, handler, opts) handlerReg[S, T]`** — registers a HandlerFunc keyed by `handler:{state.Kind()}`. Any handler registered this way can serve as both a stateroutine entry point (via `Start`) and a continuation target (via `After`, `Continue`, `Default`, `OnTimer`). Chain `.OnTerminalError(te)` to register a terminal error handler.
-- **`AddSendHandler[S, M, T](w, handler, opts) sendHandlerReg[S, M, T]`** — registers a SendFunc keyed by `send:{state.Kind()}:{msg.Kind()}`. Chain `.OnTerminalError(te)` to register a terminal error handler.
-- **`AddCallHandler[S, Req, Resp, T](w, handler, opts) callHandlerReg[S, Req, Resp, T]`** — registers a CallFunc keyed by `call:{state.Kind()}:{req.Kind()}`. Chain `.OnTerminalError(te)` to register a terminal error handler.
+- **`AddHandler[S, T](w, handler, opts) handlerReg[S, T]`** — registers a HandlerFunc keyed by `handler:{state.Kind()}`. Any handler registered this way can serve as both a stateroutine entry point (via `Start`) and a continuation target (via `After`, `Continue`, `Default`, `OnTimer`). Chain `.WithTerminalErrorHandler(te)` to register a terminal error handler.
+- **`AddSendHandler[S, M, T](w, handler, opts) sendHandlerReg[S, M, T]`** — registers a SendFunc keyed by `send:{state.Kind()}:{msg.Kind()}`. Chain `.WithTerminalErrorHandler(te)` to register a terminal error handler.
+- **`AddCallHandler[S, Req, Resp, T](w, handler, opts) callHandlerReg[S, Req, Resp, T]`** — registers a CallFunc keyed by `call:{state.Kind()}:{req.Kind()}`. Chain `.WithTerminalErrorHandler(te)` to register a terminal error handler.
 
 #### Handler Signatures
 
@@ -179,7 +179,7 @@ See the [`docs/howto/`](docs/howto/) directory:
 - **[`docs/howto/auction/`](docs/howto/auction/auction.go)** — Auction with synchronous bidding via `ClientCall`. Bidders place bids and immediately learn whether they were accepted or outbid. Demonstrates `OnCall` for request-response that advances state, `SetQueryResult` for live status, `OnTimer` for auction close, and `OnCallTerminalError` to return an error response to the blocked caller without crashing the auction.
 - **[`docs/howto/fanout/`](docs/howto/fanout/fanout.go)** — Fan-out/fan-in using child stateroutines and stateroutine-to-stateroutine Send. Parent spawns children via `ctx.Spawn`, children send results back via `stateroutine.Send`. Parent collects via `OnSend`.
 - **[`docs/howto/pipeline/`](docs/howto/pipeline/pipeline.go)** — Producer-consumer pipeline. Producer sends items to consumer via `stateroutine.Send`. Consumer processes items one at a time via `OnSend`.
-- **[`docs/howto/saga/`](docs/howto/saga/saga.go)** — SAGA compensation pattern with terminal error handlers. Sequential service calls with compensation via `OnTerminalError` — when all retries are exhausted, the terminal error handler runs compensation logic instead of failing the stateroutine.
+- **[`docs/howto/saga/`](docs/howto/saga/saga.go)** — SAGA compensation pattern with terminal error handlers. Sequential service calls with compensation via `WithTerminalErrorHandler` — when all retries are exhausted, the terminal error handler runs compensation logic instead of failing the stateroutine.
 - **[`docs/howto/batch/`](docs/howto/batch/batch.go)** — Chunked batch processing with cancellation. Processes a large dataset in chunks using `Select` + `Default`, checking for a cancel signal between chunks. Like a GenServer that checks its mailbox between batches.
 
 ### How Common Patterns Map
@@ -190,7 +190,7 @@ See the [`docs/howto/`](docs/howto/) directory:
 | **Wait for one of several events** | Handler returns `Select(OnSend(...), OnCall(...), OnTimer(...))`. The runtime sets up a Temporal selector. Query results are registered separately via `SetQueryResult`. See [`docs/howto/order/`](docs/howto/order/order.go). |
 | **Fan-out / fan-in** | Parent spawns children via `ctx.Spawn(id, state)`. Each child calls `stateroutine.Send(ctx, parentID, result)` to send results back. Parent collects via `OnSend`, one at a time. See [`docs/howto/fanout/`](docs/howto/fanout/fanout.go). |
 | **Producer-consumer** | Producer calls `stateroutine.Send` in a loop to send items. Consumer uses `Select(OnSend(receiveItem, state), OnSend(receiveDone, state))` to process items and detect completion. See [`docs/howto/pipeline/`](docs/howto/pipeline/pipeline.go). |
-| **SAGA compensation** | Register terminal error handlers via `OnTerminalError` that run compensation logic when retries are exhausted. See [`docs/howto/saga/`](docs/howto/saga/saga.go). |
+| **SAGA compensation** | Register terminal error handlers via `WithTerminalErrorHandler` that run compensation logic when retries are exhausted. See [`docs/howto/saga/`](docs/howto/saga/saga.go). |
 | **Checkpoint and continue** | Handler does expensive work, returns `Continue(nextHandler, state)`. The runtime checkpoints state (continue-as-new boundary) and immediately invokes the next handler without waiting. |
 | **Cancellable batch processing** | Process items in chunks. Between chunks, return `Select(OnSend(cancelHandler, state), Default(nextChunkHandler, state))`. If a cancel signal is pending it fires; otherwise Default continues to the next chunk. See [`docs/howto/batch/`](docs/howto/batch/batch.go). |
 | **Drain buffered signals** | Handler returns `Select(OnSend(handler, state), Default(doneHandler, state))`. Processes pending signals one at a time; when none are buffered, the default case fires. |
@@ -211,8 +211,8 @@ StateroutineWorkflow(ctx, stateroutineID):
         suspend, err = executeActivity(handler, state)
         if err != nil:
             // Check if a terminal error handler is registered
-            if handler has onTerminalErrorKey:
-                errorHandler = lookup(onTerminalErrorKey)
+            if handler has WithTerminalErrorHandlerKey:
+                errorHandler = lookup(WithTerminalErrorHandlerKey)
                 suspend, err = executeActivity(errorHandler, state, err)
                 if err != nil: fail workflow
             else:
@@ -333,7 +333,7 @@ stateroutine draws from several systems. This section maps concepts across them 
 | **Spawn child** | `ctx.Spawn` | Child Workflow | `DynamicSupervisor.start_child` | `go func()` |
 | **Sleep/timer** | `After` / `OnTimer` | `workflow.Sleep` / Timer | `Process.send_after` + `handle_info` | `time.After` |
 | **State machine** | Handler returns `Suspend` | Workflow code + signals | `handle_cast` / `handle_call` returns `{:noreply, new_state}` | Manual with select |
-| **Retry + compensation** | `OnTerminalError` / `RetryPolicy` | Activity retry policy | Supervisor restart strategy | Manual |
+| **Retry + compensation** | `WithTerminalErrorHandler` / `RetryPolicy` | Activity retry policy | Supervisor restart strategy | Manual |
 | **Durability** | Temporal (automatic) | Event history replay | (not durable by default) | (not durable) |
 | **Continue-as-new** | Automatic (library-managed) | Manual `workflow.NewContinueAsNewError` | (not needed) | (not applicable) |
 
@@ -341,7 +341,7 @@ stateroutine draws from several systems. This section maps concepts across them 
 
 ## Open Questions
 
-1. ~~**Error handling and retries**: Handlers run as activities, so Temporal's activity retry policy applies. How should we expose retry configuration?~~ **Resolved**: `HandlerOptions` (containing a `RetryPolicy`) is a required parameter on all `Add*` registration functions. Terminal error handlers are registered via the `.OnTerminalError()` builder method on the returned registration, sharing the same generic type parameters as the main handler for compile-time type safety. They are invoked only after all retries are exhausted. Retry policies are set at handler registration level only, not on individual suspend cases.
+1. ~~**Error handling and retries**: Handlers run as activities, so Temporal's activity retry policy applies. How should we expose retry configuration?~~ **Resolved**: `HandlerOptions` (containing a `RetryPolicy`) is a required parameter on all `Add*` registration functions. Terminal error handlers are registered via the `.WithTerminalErrorHandler()` builder method on the returned registration, sharing the same generic type parameters as the main handler for compile-time type safety. They are invoked only after all retries are exhausted. Retry policies are set at handler registration level only, not on individual suspend cases.
 2. **State size limits**: Temporal has payload size limits (~2MB default). Large state may need external storage.
 3. **Testing**: Should support a local/in-memory mode for unit testing without a Temporal server.
 4. **Observability**: How do we expose Temporal's native visibility (search attributes, workflow status) through the abstraction?

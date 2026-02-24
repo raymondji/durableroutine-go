@@ -99,8 +99,8 @@ func (s *ConsumerService) ReceiveDone(ctx *stateroutine.Context, state ConsumerS
 
 // RegisterHandlers registers all pipeline handlers with the worker.
 func RegisterHandlers(w *stateroutine.Worker, producerSvc *ProducerService, consumerSvc *ConsumerService) {
-	stateroutine.AddHandler(w, producerSvc.Produce, stateroutine.HandlerOptions{})
-	stateroutine.AddHandler(w, consumerSvc.StartConsumer, stateroutine.HandlerOptions{})
-	stateroutine.AddSendHandler(w, consumerSvc.ReceiveItem, stateroutine.HandlerOptions{})
-	stateroutine.AddSendHandler(w, consumerSvc.ReceiveDone, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, producerSvc.Produce, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, consumerSvc.StartConsumer, stateroutine.HandlerOptions{})
+	stateroutine.RegisterSendHandler(w, consumerSvc.ReceiveItem, stateroutine.HandlerOptions{})
+	stateroutine.RegisterSendHandler(w, consumerSvc.ReceiveDone, stateroutine.HandlerOptions{})
 }

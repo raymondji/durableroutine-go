@@ -64,7 +64,7 @@ func (s *ReminderService) SendFinal(ctx *stateroutine.Context, state FinalState)
 
 // RegisterHandlers registers all reminder handlers with the worker.
 func RegisterHandlers(w *stateroutine.Worker, svc *ReminderService) {
-	stateroutine.AddHandler(w, svc.SendInitial, stateroutine.HandlerOptions{})
-	stateroutine.AddHandler(w, svc.SendFollowUp, stateroutine.HandlerOptions{})
-	stateroutine.AddHandler(w, svc.SendFinal, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, svc.SendInitial, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, svc.SendFollowUp, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, svc.SendFinal, stateroutine.HandlerOptions{})
 }

@@ -68,76 +68,76 @@ func registerTerminalError(w *Worker, primaryKey string, teHandler any, opts Han
 	errorKey := "error:" + primaryKey
 	w.handlers[errorKey] = handlerEntry{handler: teHandler, options: opts}
 	entry := w.handlers[primaryKey]
-	entry.options.onTerminalErrorKey = errorKey
+	entry.options.terminalErrorHandlerKey = errorKey
 	w.handlers[primaryKey] = entry
 }
 
-// ─── Registration types with OnTerminalError builder methods ───
+// ─── Registration types with WithTerminalErrorHandler builder methods ───
 
-// handlerReg is returned by AddHandler to allow chaining .OnTerminalError().
+// handlerReg is returned by AddHandler to allow chaining .WithTerminalErrorHandler().
 type handlerReg[S HandlerState, T any] struct {
 	w   *Worker
 	key string
 }
 
-// OnTerminalError registers a terminal error handler that is invoked only
+// WithTerminalErrorHandler registers a terminal error handler that is invoked only
 // after all retries in the RetryPolicy are exhausted, instead of failing
 // the stateroutine. The terminal error handler must have the same State and
 // Result types as the main handler.
-func (r handlerReg[S, T]) OnTerminalError(te TerminalErrorFunc[S, T], opts HandlerOptions) {
+func (r handlerReg[S, T]) WithTerminalErrorHandler(te TerminalErrorFunc[S, T], opts HandlerOptions) {
 	registerTerminalError(r.w, r.key, te, opts)
 }
 
-// sendHandlerReg is returned by AddSendHandler to allow chaining .OnTerminalError().
+// sendHandlerReg is returned by AddSendHandler to allow chaining .WithTerminalErrorHandler().
 type sendHandlerReg[S HandlerState, M Message, T any] struct {
 	w   *Worker
 	key string
 }
 
-// OnTerminalError registers a terminal error handler that is invoked only
+// WithTerminalErrorHandler registers a terminal error handler that is invoked only
 // after all retries in the RetryPolicy are exhausted, instead of failing
 // the stateroutine. The terminal error handler must have the same State, Message,
 // and Result types as the main handler.
-func (r sendHandlerReg[S, M, T]) OnTerminalError(te SendTerminalErrorFunc[S, M, T], opts HandlerOptions) {
+func (r sendHandlerReg[S, M, T]) WithTerminalErrorHandler(te SendTerminalErrorFunc[S, M, T], opts HandlerOptions) {
 	registerTerminalError(r.w, r.key, te, opts)
 }
 
-// callHandlerReg is returned by AddCallHandler to allow chaining .OnTerminalError().
+// callHandlerReg is returned by AddCallHandler to allow chaining .WithTerminalErrorHandler().
 type callHandlerReg[S HandlerState, Req Message, Resp any, T any] struct {
 	w   *Worker
 	key string
 }
 
-// OnTerminalError registers a terminal error handler that is invoked only
+// WithTerminalErrorHandler registers a terminal error handler that is invoked only
 // after all retries in the RetryPolicy are exhausted, instead of failing
 // the stateroutine. The terminal error handler must have the same State, Request,
 // Response, and Result types as the main handler.
-func (r callHandlerReg[S, Req, Resp, T]) OnTerminalError(te CallTerminalErrorFunc[S, Req, Resp, T], opts HandlerOptions) {
+func (r callHandlerReg[S, Req, Resp, T]) WithTerminalErrorHandler(te CallTerminalErrorFunc[S, Req, Resp, T], opts HandlerOptions) {
 	registerTerminalError(r.w, r.key, te, opts)
 }
 
 // ─── Add* registration functions ───
 
-// AddHandler registers a HandlerFunc keyed by state Kind.
+// RegisterHandler registers a HandlerFunc keyed by state Kind.
 // Any HandlerFunc can serve as a stateroutine entry point (via Start) or as a
 // continuation target (via After, Continue, Default, OnTimer).
 // HandlerOptions configures retry behavior for the handler.
-// Chain .OnTerminalError() on the returned registration to register a terminal
+// Chain .WithTerminalErrorHandler() on the returned registration to register a terminal
 // error handler — it is invoked only after all retries are exhausted, instead
 // of failing the stateroutine.
-func AddHandler[S HandlerState, T any](w *Worker, h HandlerFunc[S, T], opts HandlerOptions) handlerReg[S, T] {
+func RegisterHandler[S HandlerState, T any](w *Worker, h HandlerFunc[S, T], opts HandlerOptions) handlerReg[S, T] {
 	var zero S
 	key := "handler:" + zero.Kind()
 	addEntry(w, key, h, opts)
 	return handlerReg[S, T]{w: w, key: key}
 }
 
-// AddSendHandler registers a SendFunc keyed by state Kind and message Kind.
+// RegisterSendHandler registers a SendFunc keyed by state Kind and message Kind.
 // HandlerOptions configures retry behavior for the handler.
-// Chain .OnTerminalError() on the returned registration to register a terminal
+// Chain .WithTerminalErrorHandler() on the returned registration to register a terminal
 // error handler — it is invoked only after all retries are exhausted, instead
 // of failing the stateroutine.
-func AddSendHandler[S HandlerState, M Message, T any](w *Worker, h SendFunc[S, M, T], opts HandlerOptions) sendHandlerReg[S, M, T] {
+func RegisterSendHandler[S HandlerState, M Message, T any](w *Worker, h SendFunc[S, M, T], opts HandlerOptions) sendHandlerReg[S, M, T] {
 	var zeroS S
 	var zeroM M
 	key := "send:" + zeroS.Kind() + ":" + zeroM.Kind()
@@ -145,12 +145,12 @@ func AddSendHandler[S HandlerState, M Message, T any](w *Worker, h SendFunc[S, M
 	return sendHandlerReg[S, M, T]{w: w, key: key}
 }
 
-// AddCallHandler registers a CallFunc keyed by state Kind and request Kind.
+// RegisterCallHandler registers a CallFunc keyed by state Kind and request Kind.
 // HandlerOptions configures retry behavior for the handler.
-// Chain .OnTerminalError() on the returned registration to register a terminal
+// Chain .WithTerminalErrorHandler() on the returned registration to register a terminal
 // error handler — it is invoked only after all retries are exhausted, instead
 // of failing the stateroutine.
-func AddCallHandler[S HandlerState, Req Message, Resp any, T any](w *Worker, h CallFunc[S, Req, Resp, T], opts HandlerOptions) callHandlerReg[S, Req, Resp, T] {
+func RegisterCallHandler[S HandlerState, Req Message, Resp any, T any](w *Worker, h CallFunc[S, Req, Resp, T], opts HandlerOptions) callHandlerReg[S, Req, Resp, T] {
 	var zeroS S
 	var zeroReq Req
 	key := "call:" + zeroS.Kind() + ":" + zeroReq.Kind()

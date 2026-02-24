@@ -81,9 +81,9 @@ func (PaidState) Kind() string { return "booking.paid" }
 
 type BookingService struct {
 	// Injected dependencies would go here (e.g., DB, payment gateway).
-	ReservationTimeout time.Duration         // if zero, defaults to 15min
-	ShippingTimeout    time.Duration         // if zero, defaults to 24h
-	ChargeCardFn       func(string) error    // if non-nil, called during payment processing
+	ReservationTimeout time.Duration      // if zero, defaults to 15min
+	ShippingTimeout    time.Duration      // if zero, defaults to 24h
+	ChargeCardFn       func(string) error // if non-nil, called during payment processing
 }
 
 func (s *BookingService) ReserveItem(ctx *stateroutine.Context, state BookingState) (*stateroutine.Suspend[BookingResult], error) {
@@ -154,16 +154,16 @@ func (s *BookingService) ExpireShipping(ctx *stateroutine.Context, _ PaidState) 
 
 // RegisterHandlers registers all booking handlers with the worker.
 func RegisterHandlers(w *stateroutine.Worker, svc *BookingService) {
-	stateroutine.AddHandler(w, svc.ReserveItem, stateroutine.HandlerOptions{
+	stateroutine.RegisterHandler(w, svc.ReserveItem, stateroutine.HandlerOptions{
 		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 5},
 	})
-	stateroutine.AddSendHandler(w, svc.ProcessPayment, stateroutine.HandlerOptions{
+	stateroutine.RegisterSendHandler(w, svc.ProcessPayment, stateroutine.HandlerOptions{
 		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
-	}).OnTerminalError(svc.PaymentFailed, stateroutine.HandlerOptions{})
-	stateroutine.AddSendHandler(w, svc.ProcessShipping, stateroutine.HandlerOptions{
+	}).WithTerminalErrorHandler(svc.PaymentFailed, stateroutine.HandlerOptions{})
+	stateroutine.RegisterSendHandler(w, svc.ProcessShipping, stateroutine.HandlerOptions{
 		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
 	})
-	stateroutine.AddCallHandler(w, svc.CancelBooking, stateroutine.HandlerOptions{})
-	stateroutine.AddHandler(w, svc.ExpireReservation, stateroutine.HandlerOptions{})
-	stateroutine.AddHandler(w, svc.ExpireShipping, stateroutine.HandlerOptions{})
+	stateroutine.RegisterCallHandler(w, svc.CancelBooking, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, svc.ExpireReservation, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, svc.ExpireShipping, stateroutine.HandlerOptions{})
 }

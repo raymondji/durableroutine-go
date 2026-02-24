@@ -99,13 +99,13 @@ func (s *AuctionService) OpenAuction(ctx *stateroutine.Context, state AuctionSta
 func (s *AuctionService) PlaceBid(ctx *stateroutine.Context, state BiddingState, req PlaceBidReq) (PlaceBidResp, *stateroutine.Suspend[AuctionResult], error) {
 	if req.Amount <= state.HighestBid {
 		return PlaceBidResp{
-			Accepted:   false,
-			HighestBid: state.HighestBid,
-			Message:    fmt.Sprintf("bid too low, current highest is $%.2f", state.HighestBid),
-		}, stateroutine.Select[AuctionResult](
-			stateroutine.OnCall(s.PlaceBid, state),
-			stateroutine.OnTimer(state.Duration, s.CloseAuction, state),
-		), nil
+				Accepted:   false,
+				HighestBid: state.HighestBid,
+				Message:    fmt.Sprintf("bid too low, current highest is $%.2f", state.HighestBid),
+			}, stateroutine.Select[AuctionResult](
+				stateroutine.OnCall(s.PlaceBid, state),
+				stateroutine.OnTimer(state.Duration, s.CloseAuction, state),
+			), nil
 	}
 
 	fmt.Printf("new high bid: $%.2f by %s (was $%.2f by %s)\n",
@@ -123,13 +123,13 @@ func (s *AuctionService) PlaceBid(ctx *stateroutine.Context, state BiddingState,
 	})
 
 	return PlaceBidResp{
-		Accepted:   true,
-		HighestBid: state.HighestBid,
-		Message:    "bid accepted, you are the highest bidder",
-	}, stateroutine.Select[AuctionResult](
-		stateroutine.OnCall(s.PlaceBid, state),
-		stateroutine.OnTimer(state.Duration, s.CloseAuction, state),
-	), nil
+			Accepted:   true,
+			HighestBid: state.HighestBid,
+			Message:    "bid accepted, you are the highest bidder",
+		}, stateroutine.Select[AuctionResult](
+			stateroutine.OnCall(s.PlaceBid, state),
+			stateroutine.OnTimer(state.Duration, s.CloseAuction, state),
+		), nil
 }
 
 func (s *AuctionService) BidFailed(ctx *stateroutine.Context, state BiddingState, req PlaceBidReq, err error) (PlaceBidResp, *stateroutine.Suspend[AuctionResult], error) {
@@ -137,12 +137,12 @@ func (s *AuctionService) BidFailed(ctx *stateroutine.Context, state BiddingState
 		req.BidderID, req.Amount, err)
 
 	return PlaceBidResp{
-		Accepted: false,
-		Message:  fmt.Sprintf("bid processing failed: %v", err),
-	}, stateroutine.Select[AuctionResult](
-		stateroutine.OnCall(s.PlaceBid, state),
-		stateroutine.OnTimer(state.Duration, s.CloseAuction, state),
-	), nil
+			Accepted: false,
+			Message:  fmt.Sprintf("bid processing failed: %v", err),
+		}, stateroutine.Select[AuctionResult](
+			stateroutine.OnCall(s.PlaceBid, state),
+			stateroutine.OnTimer(state.Duration, s.CloseAuction, state),
+		), nil
 }
 
 func (s *AuctionService) CloseAuction(ctx *stateroutine.Context, state BiddingState) (*stateroutine.Suspend[AuctionResult], error) {
@@ -163,9 +163,9 @@ func (s *AuctionService) CloseAuction(ctx *stateroutine.Context, state BiddingSt
 
 // RegisterHandlers registers all auction handlers with the worker.
 func RegisterHandlers(w *stateroutine.Worker, svc *AuctionService) {
-	stateroutine.AddHandler(w, svc.OpenAuction, stateroutine.HandlerOptions{})
-	stateroutine.AddCallHandler(w, svc.PlaceBid, stateroutine.HandlerOptions{
+	stateroutine.RegisterHandler(w, svc.OpenAuction, stateroutine.HandlerOptions{})
+	stateroutine.RegisterCallHandler(w, svc.PlaceBid, stateroutine.HandlerOptions{
 		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
-	}).OnTerminalError(svc.BidFailed, stateroutine.HandlerOptions{})
-	stateroutine.AddHandler(w, svc.CloseAuction, stateroutine.HandlerOptions{})
+	}).WithTerminalErrorHandler(svc.BidFailed, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, svc.CloseAuction, stateroutine.HandlerOptions{})
 }

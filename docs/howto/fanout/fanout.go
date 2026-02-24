@@ -115,7 +115,7 @@ func (s *ItemService) ProcessItem(ctx *stateroutine.Context, state ItemState) (*
 
 // RegisterHandlers registers all fanout handlers with the worker.
 func RegisterHandlers(w *stateroutine.Worker, fanoutSvc *FanoutService, itemSvc *ItemService) {
-	stateroutine.AddHandler(w, fanoutSvc.SpawnItems, stateroutine.HandlerOptions{})
-	stateroutine.AddHandler(w, itemSvc.ProcessItem, stateroutine.HandlerOptions{})
-	stateroutine.AddSendHandler(w, fanoutSvc.CollectResult, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, fanoutSvc.SpawnItems, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, itemSvc.ProcessItem, stateroutine.HandlerOptions{})
+	stateroutine.RegisterSendHandler(w, fanoutSvc.CollectResult, stateroutine.HandlerOptions{})
 }

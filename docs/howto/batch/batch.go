@@ -112,7 +112,7 @@ func ProcessItem(item string) error {
 
 // RegisterHandlers registers all batch handlers with the worker.
 func RegisterHandlers(w *stateroutine.Worker, svc *BatchService) {
-	stateroutine.AddHandler(w, svc.StartBatch, stateroutine.HandlerOptions{})
-	stateroutine.AddHandler(w, svc.ProcessChunk, stateroutine.HandlerOptions{})
-	stateroutine.AddSendHandler(w, svc.CancelBatch, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, svc.StartBatch, stateroutine.HandlerOptions{})
+	stateroutine.RegisterHandler(w, svc.ProcessChunk, stateroutine.HandlerOptions{})
+	stateroutine.RegisterSendHandler(w, svc.CancelBatch, stateroutine.HandlerOptions{})
 }

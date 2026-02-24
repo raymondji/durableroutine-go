@@ -5,12 +5,21 @@ import (
 	"fmt"
 	"log"
 
+	temporalclient "go.temporal.io/sdk/client"
+
 	"github.com/raymondji/stateroutine/docs/howto/pipeline"
 	"github.com/raymondji/stateroutine/stateroutine"
+	"github.com/raymondji/stateroutine/temporalimpl"
 )
 
 func main() {
 	ctx := context.Background()
+
+	tc, err := temporalclient.Dial(temporalclient.Options{HostPort: "localhost:7233"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer tc.Close()
 
 	producerSvc := &pipeline.ProducerService{}
 	consumerSvc := &pipeline.ConsumerService{}
@@ -18,14 +27,15 @@ func main() {
 	w := stateroutine.NewWorker("pipeline-queue")
 	pipeline.RegisterHandlers(w, producerSvc, consumerSvc)
 
+	tw := temporalimpl.NewWorker(tc, w)
 	go func() {
-		if err := w.Start(); err != nil {
+		if err := tw.Start(); err != nil {
 			log.Fatal(err)
 		}
 	}()
-	defer w.Stop()
+	defer tw.Stop()
 
-	client := stateroutine.NewClient()
+	client := stateroutine.NewClientFrom(temporalimpl.NewClient(tc, "pipeline-queue"))
 
 	// Start the consumer first so it's ready to receive.
 	consumerH, err := stateroutine.Start(client, ctx, "consumer-1",
