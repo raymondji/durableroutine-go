@@ -84,6 +84,10 @@ func main() {
 
 Full example: [`docs/howto/booking/`](docs/howto/booking/booking.go)
 
+## Get Started
+
+Follow the [Quick Start](docs/tutorials/QUICK_START.md) to build your first durable routine in 5 minutes — no Temporal installation required.
+
 ## How It Works
 
 - **Handlers are normal Go functions** — no replay-safety or determinism constraints. Call databases, use `time.Now()`, do whatever you need.
