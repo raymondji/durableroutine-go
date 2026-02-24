@@ -6,13 +6,13 @@ These are ready for Claude to work on.
 
 https://github.com/indeedeng/iwf
 
-# Draft TODOs
-
-These are not ready for Claude to work on yet.
-
 ## Rename Spawn to Start or something similar for consistency
 
 Let's aim for maximum consistency on naming with the APIs.
+
+# Draft TODOs
+
+These are not ready for Claude to work on yet.
 
 ## Explore splitting the stateroutine client API and actual Stateroutine handler API into two packages for clarity
 

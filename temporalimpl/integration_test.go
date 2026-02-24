@@ -300,3 +300,150 @@ func TestSendSignal(t *testing.T) {
 	}
 	t.Logf("Send test passed: %+v", result)
 }
+
+// --- Continue-as-new test: verifies state, queries, sends, and calls survive CAN ---
+
+type CANCountState struct{ Counter int }
+
+func (CANCountState) Kind() string { return "can-count" }
+
+type CANWaitState struct {
+	Counter int
+	MsgText string
+}
+
+func (CANWaitState) Kind() string { return "can-wait" }
+
+type CANStatusResp struct{ Count int }
+
+func (CANStatusResp) Kind() string { return "can-status" }
+
+type CANMsg struct{ Text string }
+
+func (CANMsg) Kind() string { return "can-msg" }
+
+type CANCallReq struct{ Text string }
+
+func (CANCallReq) Kind() string { return "can-call" }
+
+type CANCallResp struct{ Echo string }
+
+type CANResult struct {
+	FinalCount int
+	MsgText    string
+	CallEcho   string
+}
+
+type canService struct{}
+
+func (s *canService) Count(ctx *stateroutine.Context, state CANCountState) (*stateroutine.Suspend[CANResult], error) {
+	stateroutine.SetQueryResult(ctx, CANStatusResp{Count: state.Counter})
+	if state.Counter >= 15 {
+		return stateroutine.Continue(s.Wait, CANWaitState{Counter: state.Counter}), nil
+	}
+	return stateroutine.Continue(s.Count, CANCountState{Counter: state.Counter + 1}), nil
+}
+
+func (s *canService) Wait(ctx *stateroutine.Context, state CANWaitState) (*stateroutine.Suspend[CANResult], error) {
+	return stateroutine.Select[CANResult](
+		stateroutine.OnSend(s.RecvMsg, state),
+		stateroutine.OnCall(s.HandleCall, state),
+	), nil
+}
+
+func (s *canService) RecvMsg(ctx *stateroutine.Context, state CANWaitState, msg CANMsg) (*stateroutine.Suspend[CANResult], error) {
+	state.MsgText = msg.Text
+	return stateroutine.Select[CANResult](
+		stateroutine.OnCall(s.HandleCall, state),
+	), nil
+}
+
+func (s *canService) HandleCall(ctx *stateroutine.Context, state CANWaitState, req CANCallReq) (CANCallResp, *stateroutine.Suspend[CANResult], error) {
+	return CANCallResp{Echo: req.Text}, stateroutine.Done(CANResult{
+		FinalCount: state.Counter,
+		MsgText:    state.MsgText,
+		CallEcho:   req.Text,
+	}), nil
+}
+
+func TestContinueAsNew(t *testing.T) {
+	tc := newTemporalClient(t)
+	taskQueue := uniqueTaskQueue(t)
+
+	svc := &canService{}
+
+	w := stateroutine.NewWorker(taskQueue)
+	stateroutine.AddHandler(w, svc.Count, stateroutine.HandlerOptions{})
+	stateroutine.AddHandler(w, svc.Wait, stateroutine.HandlerOptions{})
+	stateroutine.AddSendHandler(w, svc.RecvMsg, stateroutine.HandlerOptions{})
+	stateroutine.AddCallHandler(w, svc.HandleCall, stateroutine.HandlerOptions{})
+
+	tw := temporalimpl.NewWorker(tc, w)
+	go func() {
+		if err := tw.Start(); err != nil {
+			t.Logf("worker start error: %v", err)
+		}
+	}()
+	defer tw.Stop()
+
+	time.Sleep(500 * time.Millisecond)
+
+	client := temporalimpl.NewClient(tc, taskQueue)
+	client.MaxHistoryLength = 30
+	srClient := stateroutine.NewClientFrom(client)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	wfID := uniqueID("can")
+	h, err := stateroutine.Start(srClient, ctx, wfID, svc.Count, CANCountState{Counter: 0})
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	// Wait for counting to complete and CAN to happen.
+	// 15 iterations * ~3 history events each = ~45 events, well over threshold of 30.
+	time.Sleep(10 * time.Second)
+
+	// Verify query survived CAN.
+	status, err := stateroutine.ClientQuery(srClient, ctx, wfID, CANStatusResp{})
+	if err != nil {
+		t.Fatalf("ClientQuery failed: %v", err)
+	}
+	if status.Count != 15 {
+		t.Fatalf("expected query Count=15, got %d", status.Count)
+	}
+
+	// Send a message after CAN.
+	err = stateroutine.ClientSend(srClient, ctx, wfID, svc.RecvMsg, CANMsg{Text: "hello-after-can"})
+	if err != nil {
+		t.Fatalf("ClientSend failed: %v", err)
+	}
+
+	time.Sleep(2 * time.Second)
+
+	// Call after CAN.
+	callResp, err := stateroutine.ClientCall(srClient, ctx, wfID, svc.HandleCall, CANCallReq{Text: "echo-test"})
+	if err != nil {
+		t.Fatalf("ClientCall failed: %v", err)
+	}
+	if callResp.Echo != "echo-test" {
+		t.Fatalf("expected call Echo='echo-test', got %q", callResp.Echo)
+	}
+
+	// Verify final result.
+	result, err := h.Get(ctx)
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+	if result.FinalCount != 15 {
+		t.Fatalf("expected FinalCount=15, got %d", result.FinalCount)
+	}
+	if result.MsgText != "hello-after-can" {
+		t.Fatalf("expected MsgText='hello-after-can', got %q", result.MsgText)
+	}
+	if result.CallEcho != "echo-test" {
+		t.Fatalf("expected CallEcho='echo-test', got %q", result.CallEcho)
+	}
+	t.Logf("ContinueAsNew test passed: %+v", result)
+}

@@ -283,7 +283,14 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
 		}
 
 	continueAsNewCheck:
-		if workflow.GetInfo(ctx).GetCurrentHistoryLength() > 10000 {
+		// Skip CAN when a call handler output is pending — the next loop
+		// iteration must consume it first (it may complete the workflow or
+		// establish the next suspend state).
+		shouldCAN := callHandlerOutput == nil && workflow.GetInfo(ctx).GetContinueAsNewSuggested()
+		if callHandlerOutput == nil && input.MaxHistoryLength > 0 && workflow.GetInfo(ctx).GetCurrentHistoryLength() > int(input.MaxHistoryLength) {
+			shouldCAN = true
+		}
+		if shouldCAN {
 			for len(pendingCalls) > 0 {
 				pc := pendingCalls[0]
 				pendingCalls = pendingCalls[1:]
@@ -310,9 +317,10 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
 			}
 
 			return nil, workflow.NewContinueAsNewError(ctx, StateroutineWorkflow, WorkflowInput{
-				HandlerKey:   handlerKey,
-				State:        state,
-				QueryResults: allQueryResults,
+				HandlerKey:       handlerKey,
+				State:            state,
+				QueryResults:     allQueryResults,
+				MaxHistoryLength: input.MaxHistoryLength,
 			})
 		}
 	}

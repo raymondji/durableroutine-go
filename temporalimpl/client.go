@@ -15,6 +15,11 @@ import (
 type Client struct {
 	temporal  temporalclient.Client
 	taskQueue string
+
+	// MaxHistoryLength, when > 0, triggers continue-as-new when the workflow
+	// history exceeds this many events. Useful for testing CAN logic with a
+	// small threshold. When 0, only Temporal's GetContinueAsNewSuggested is used.
+	MaxHistoryLength int32
 }
 
 var _ stateroutine.ClientImpl = (*Client)(nil)
@@ -31,8 +36,9 @@ func (c *Client) Start(ctx context.Context, id string, kind string, state any) e
 		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
 	}
 	input := WorkflowInput{
-		HandlerKey: "handler:" + kind,
-		State:      state,
+		HandlerKey:       "handler:" + kind,
+		State:            state,
+		MaxHistoryLength: c.MaxHistoryLength,
 	}
 	_, err := c.temporal.ExecuteWorkflow(ctx, opts, StateroutineWorkflow, input)
 	return err

@@ -4,9 +4,10 @@ import "time"
 
 // WorkflowInput is the input to StateroutineWorkflow.
 type WorkflowInput struct {
-	HandlerKey   string       `json:"handlerKey"`
-	State        any          `json:"state"`
-	QueryResults []QueryEntry `json:"queryResults,omitempty"`
+	HandlerKey       string       `json:"handlerKey"`
+	State            any          `json:"state"`
+	QueryResults     []QueryEntry `json:"queryResults,omitempty"`
+	MaxHistoryLength int32        `json:"maxHistoryLength,omitempty"`
 }
 
 // QueryEntry is a query name + result pair preserved across continue-as-new.
