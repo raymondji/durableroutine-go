@@ -1,6 +1,6 @@
 // Package pipeline demonstrates a producer-consumer pattern between two
 // durable stateroutines. The producer generates items one at a time and sends
-// each to the consumer via stateroutine.Send.
+// each to the consumer via stateroutine.BufferSend.
 // Uses struct-based handlers for dependency injection.
 package pipeline
 
@@ -52,19 +52,14 @@ type ProducerService struct {
 }
 
 func (s *ProducerService) Produce(ctx *stateroutine.Context, state ProducerState) (*stateroutine.Suspend[stateroutine.Unit], error) {
+	var stub *ConsumerService
 	for i, data := range state.Items {
 		item := Item{Seq: i, Data: data}
-		// Use explicit type params with nil handler since the producer doesn't have
-		// access to the consumer's ReceiveItem handler function.
-		if err := stateroutine.Send[ConsumerState, Item, ConsumerResult](ctx, state.ConsumerStateroutineID, nil, item); err != nil {
-			return nil, fmt.Errorf("send item %d: %w", i, err)
-		}
+		stateroutine.BufferSend(ctx, state.ConsumerStateroutineID, stub.ReceiveItem, item)
 		fmt.Printf("produced item %d: %s\n", i, data)
 	}
 
-	if err := stateroutine.Send[ConsumerState, DoneMsg, ConsumerResult](ctx, state.ConsumerStateroutineID, nil, DoneMsg{}); err != nil {
-		return nil, fmt.Errorf("send done: %w", err)
-	}
+	stateroutine.BufferSend(ctx, state.ConsumerStateroutineID, stub.ReceiveDone, DoneMsg{})
 	fmt.Println("producer finished")
 	return stateroutine.Done(stateroutine.Unit{}), nil
 }

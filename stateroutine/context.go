@@ -35,25 +35,25 @@ func (c *Context) StateroutineID() string {
 	return c.stateroutineID
 }
 
-// Start requests that a child stateroutine be started when the current handler
+// BufferStart requests that a child stateroutine be started when the current handler
 // completes. The child runs as an independent durable stateroutine (Temporal child
 // workflow). The state.Kind() determines which registered handler runs.
-func (c *Context) Start(stateroutineID string, state HandlerState) {
+func (c *Context) BufferStart(stateroutineID string, state HandlerState) {
 	c.startRequests = append(c.startRequests, startRequest{
 		stateroutineID: stateroutineID,
 		state:          state,
 	})
 }
 
-// Send buffers a fire-and-forget message to another stateroutine's inbox.
+// BufferSend buffers a fire-and-forget message to another stateroutine's inbox.
 // The message is delivered by the runtime after the current handler returns its
 // Suspend value, not immediately. The handler parameter is used only for type
 // inference of the target state type — it is not called. Pass the same function
-// registered with AddSendHandler, or pass nil with explicit type parameters when
+// registered with AddSendHandler, or use a nil stub for type inference when
 // the sender doesn't have access to the receiver's handler function.
 // Maps to a Temporal Signal.
-func Send[S HandlerState, M Message, T any](ctx *Context, stateroutineID string,
-	handler SendFunc[S, M, T], msg M) error {
+func BufferSend[S HandlerState, M Message, T any](ctx *Context, stateroutineID string,
+	handler SendFunc[S, M, T], msg M) {
 	var zeroS S
 	ctx.sendRequests = append(ctx.sendRequests, sendRequest{
 		stateroutineID: stateroutineID,
@@ -61,7 +61,6 @@ func Send[S HandlerState, M Message, T any](ctx *Context, stateroutineID string,
 		msgKind:        msg.Kind(),
 		msg:            msg,
 	})
-	return nil
 }
 
 // NewContext creates a new stateroutine Context. Exported for use by

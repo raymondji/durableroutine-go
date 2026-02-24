@@ -1,7 +1,7 @@
 // Package fanout demonstrates fan-out/fan-in using child stateroutines and
 // stateroutine-to-stateroutine Send. Each child runs as its own durable
 // stateroutine with independent retries, timeouts, and event history. Children
-// send results back to the parent via stateroutine.Send.
+// send results back to the parent via stateroutine.BufferSend.
 // Uses struct-based handlers for dependency injection.
 package fanout
 
@@ -64,7 +64,7 @@ func (s *FanoutService) StartItems(ctx *stateroutine.Context, state FanoutState)
 	parentID := ctx.StateroutineID()
 
 	for _, item := range state.Items {
-		ctx.Start(fmt.Sprintf("item-%s", item.ID),
+		ctx.BufferStart(fmt.Sprintf("item-%s", item.ID),
 			ItemState{ID: item.ID, Data: item.Data, ParentID: parentID})
 	}
 
@@ -105,11 +105,8 @@ func (s *ItemService) ProcessItem(ctx *stateroutine.Context, state ItemState) (*
 	}
 
 	// Send result back to the parent — like ch <- result.
-	// Use explicit type params with nil handler since the child doesn't have
-	// access to the parent's CollectResult handler function.
-	if err := stateroutine.Send[CollectingState, ItemResult, FanoutResult](ctx, state.ParentID, nil, result); err != nil {
-		return nil, fmt.Errorf("send result: %w", err)
-	}
+	var stub *FanoutService
+	stateroutine.BufferSend(ctx, state.ParentID, stub.CollectResult, result)
 	return stateroutine.Done(stateroutine.Unit{}), nil
 }
 

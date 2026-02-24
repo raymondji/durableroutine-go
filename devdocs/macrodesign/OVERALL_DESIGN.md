@@ -152,8 +152,8 @@ Terminal error handlers are invoked only after all retries configured in the Ret
 
 - **`Context`** — wraps `context.Context` with stateroutine capabilities
 - **`ctx.StateroutineID()`** — get the current stateroutine's ID (reply address for children)
-- **`ctx.Start(id, state)`** — start a child stateroutine (state.Kind() determines handler)
-- **`Send[S, M, T](ctx, stateroutineID, handler, msg)`** — buffer a fire-and-forget message to another stateroutine (delivered after handler returns). The handler is passed for type inference; pass `nil` with explicit type params when the sender doesn't have the receiver's handler. Inbox name = `msg.Kind()`.
+- **`ctx.BufferStart(id, state)`** — start a child stateroutine (state.Kind() determines handler). Executes after the current handler returns its Suspend.
+- **`BufferSend[S, M, T](ctx, stateroutineID, handler, msg)`** — buffer a fire-and-forget message to another stateroutine (delivered after handler returns). The handler is passed for type inference; use a nil stub for type inference when the sender doesn't have the receiver's handler. Inbox name = `msg.Kind()`.
 - **`SetQueryResult[Resp](ctx, resp)`** — store a static query result that persists across state transitions. Takes effect after the current handler returns its Suspend. Replaces any existing result for the same `Resp.Kind()`. Clients retrieve the value via `ClientQuery`. Maps to a Temporal Query handler that returns the stored value.
 
 #### Client (typed top-level functions)
@@ -177,8 +177,8 @@ See the [`docs/howto/`](docs/howto/) directory:
 - **[`docs/howto/order/`](docs/howto/order/order.go)** — Order lifecycle with Send + timer + Query. Demonstrates `OnSend`, `SetQueryResult`, `OnTimer`, and `Select`.
 - **[`docs/howto/booking/`](docs/howto/booking/booking.go)** — Multi-step client-driven stateroutine with Send + Call + Query. Client sends payment/shipping info via `ClientSend`, can cancel via `ClientCall`, and check status via `ClientQuery`. Demonstrates `OnSendTerminalError` to release the reservation if payment fails after all retries.
 - **[`docs/howto/auction/`](docs/howto/auction/auction.go)** — Auction with synchronous bidding via `ClientCall`. Bidders place bids and immediately learn whether they were accepted or outbid. Demonstrates `OnCall` for request-response that advances state, `SetQueryResult` for live status, `OnTimer` for auction close, and `OnCallTerminalError` to return an error response to the blocked caller without crashing the auction.
-- **[`docs/howto/fanout/`](docs/howto/fanout/fanout.go)** — Fan-out/fan-in using child stateroutines and stateroutine-to-stateroutine Send. Parent starts children via `ctx.Start`, children send results back via `stateroutine.Send`. Parent collects via `OnSend`.
-- **[`docs/howto/pipeline/`](docs/howto/pipeline/pipeline.go)** — Producer-consumer pipeline. Producer sends items to consumer via `stateroutine.Send`. Consumer processes items one at a time via `OnSend`.
+- **[`docs/howto/fanout/`](docs/howto/fanout/fanout.go)** — Fan-out/fan-in using child stateroutines and stateroutine-to-stateroutine BufferSend. Parent starts children via `ctx.BufferStart`, children send results back via `stateroutine.BufferSend`. Parent collects via `OnSend`.
+- **[`docs/howto/pipeline/`](docs/howto/pipeline/pipeline.go)** — Producer-consumer pipeline. Producer sends items to consumer via `stateroutine.BufferSend`. Consumer processes items one at a time via `OnSend`.
 - **[`docs/howto/saga/`](docs/howto/saga/saga.go)** — SAGA compensation pattern with terminal error handlers. Sequential service calls with compensation via `WithTerminalErrorHandler` — when all retries are exhausted, the terminal error handler runs compensation logic instead of failing the stateroutine.
 - **[`docs/howto/batch/`](docs/howto/batch/batch.go)** — Chunked batch processing with cancellation. Processes a large dataset in chunks using `Select` + `Default`, checking for a cancel signal between chunks. Like a GenServer that checks its mailbox between batches.
 
@@ -188,8 +188,8 @@ See the [`docs/howto/`](docs/howto/) directory:
 |---|---|
 | **Do something, sleep, do something** | Handler does work, returns `After(duration, nextHandler, state)`. Each handler is an activity. See [`docs/howto/reminder/`](docs/howto/reminder/reminder.go). |
 | **Wait for one of several events** | Handler returns `Select(OnSend(...), OnCall(...), OnTimer(...))`. The runtime sets up a Temporal selector. Query results are registered separately via `SetQueryResult`. See [`docs/howto/order/`](docs/howto/order/order.go). |
-| **Fan-out / fan-in** | Parent starts children via `ctx.Start(id, state)`. Each child calls `stateroutine.Send(ctx, parentID, result)` to send results back. Parent collects via `OnSend`, one at a time. See [`docs/howto/fanout/`](docs/howto/fanout/fanout.go). |
-| **Producer-consumer** | Producer calls `stateroutine.Send` in a loop to send items. Consumer uses `Select(OnSend(receiveItem, state), OnSend(receiveDone, state))` to process items and detect completion. See [`docs/howto/pipeline/`](docs/howto/pipeline/pipeline.go). |
+| **Fan-out / fan-in** | Parent starts children via `ctx.BufferStart(id, state)`. Each child calls `stateroutine.BufferSend(ctx, parentID, result)` to send results back. Parent collects via `OnSend`, one at a time. See [`docs/howto/fanout/`](docs/howto/fanout/fanout.go). |
+| **Producer-consumer** | Producer calls `stateroutine.BufferSend` in a loop to send items. Consumer uses `Select(OnSend(receiveItem, state), OnSend(receiveDone, state))` to process items and detect completion. See [`docs/howto/pipeline/`](docs/howto/pipeline/pipeline.go). |
 | **SAGA compensation** | Register terminal error handlers via `WithTerminalErrorHandler` that run compensation logic when retries are exhausted. See [`docs/howto/saga/`](docs/howto/saga/saga.go). |
 | **Checkpoint and continue** | Handler does expensive work, returns `Continue(nextHandler, state)`. The runtime checkpoints state (continue-as-new boundary) and immediately invokes the next handler without waiting. |
 | **Cancellable batch processing** | Process items in chunks. Between chunks, return `Select(OnSend(cancelHandler, state), Default(nextChunkHandler, state))`. If a cancel signal is pending it fires; otherwise Default continues to the next chunk. See [`docs/howto/batch/`](docs/howto/batch/batch.go). |
@@ -261,7 +261,7 @@ StateroutineWorkflow(ctx, stateroutineID):
                 return qr.result, nil
             })
 
-        // Handle child starts from ctx.Start calls
+        // Handle child starts from ctx.BufferStart calls
         for each start in ctx.startRequests:
             workflow.ExecuteChildWorkflow(ctx, start.state.Kind(), start.state)
 
@@ -316,8 +316,8 @@ stateroutine draws from several systems. This section maps concepts across them 
 ### Inspirations
 
 - **[Temporal](https://temporal.io/)** — The durability engine underneath. stateroutine builds on Temporal's workflow/activity model, signals, updates, queries, and timers. The key difference is that stateroutine moves all user code into activities, eliminating replay-safety constraints.
-- **[Elixir GenServer](https://hexdocs.pm/elixir/GenServer.html)** — The actor model semantics. Each stateroutine is an actor with a mailbox. `Send` maps to `GenServer.cast`, `ClientCall` maps to `GenServer.call`, and the handler → suspend → handler loop mirrors GenServer's callback model where each callback returns the next state.
-- **Go goroutines & channels** — The mental model for concurrency. `ctx.Start` is like `go func()`, `Send` is like `ch <- msg`, and `OnSend` is like `<-ch`. Fan-out/fan-in patterns look nearly identical to their goroutine+channel counterparts, but with durability.
+- **[Elixir GenServer](https://hexdocs.pm/elixir/GenServer.html)** — The actor model semantics. Each stateroutine is an actor with a mailbox. `BufferSend` maps to `GenServer.cast`, `ClientCall` maps to `GenServer.call`, and the handler → suspend → handler loop mirrors GenServer's callback model where each callback returns the next state.
+- **Go goroutines & channels** — The mental model for concurrency. `ctx.BufferStart` is like `go func()`, `BufferSend` is like `ch <- msg`, and `OnSend` is like `<-ch`. Fan-out/fan-in patterns look nearly identical to their goroutine+channel counterparts, but with durability.
 - **[River](https://riverqueue.com/)** — Type safety ergonomics. River's pattern of job types that self-identify via `Kind()` and are registered at startup inspired stateroutine's handler registration model.
 
 ### Concept Comparison
@@ -326,11 +326,11 @@ stateroutine draws from several systems. This section maps concepts across them 
 |---|---|---|---|---|
 | **Unit of execution** | Stateroutine | Workflow | GenServer process | Goroutine |
 | **Start** | `Start(client, ctx, id, handler, state)` | `client.ExecuteWorkflow(...)` | `GenServer.start_link(mod, args)` | `go func()` |
-| **Fire-and-forget message** | `ClientSend[S,M,T]` / `Send[S,M,T]` | Signal | `GenServer.cast` | `ch <- msg` |
+| **Fire-and-forget message** | `ClientSend[S,M,T]` / `BufferSend[S,M,T]` | Signal | `GenServer.cast` | `ch <- msg` |
 | **Request-response** | `ClientCall` | Update | `GenServer.call` | (no direct equivalent) |
 | **Read-only query** | `ClientQuery` + `SetQueryResult` | Query | `:sys.get_state` / custom call | (no direct equivalent) |
 | **Get result** | `Handle.Get` / `ClientGet` | `WorkflowRun.Get` | (process exit value) | (no direct equivalent) |
-| **Start child** | `ctx.Start` | Child Workflow | `DynamicSupervisor.start_child` | `go func()` |
+| **Start child** | `ctx.BufferStart` | Child Workflow | `DynamicSupervisor.start_child` | `go func()` |
 | **Sleep/timer** | `After` / `OnTimer` | `workflow.Sleep` / Timer | `Process.send_after` + `handle_info` | `time.After` |
 | **State machine** | Handler returns `Suspend` | Workflow code + signals | `handle_cast` / `handle_call` returns `{:noreply, new_state}` | Manual with select |
 | **Retry + compensation** | `WithTerminalErrorHandler` / `RetryPolicy` | Activity retry policy | Supervisor restart strategy | Manual |
