@@ -85,7 +85,7 @@ Full example: [`docs/howto/booking/`](docs/howto/booking/booking.go)
 - **Handlers are normal Go functions** — no replay-safety or determinism constraints. Call databases, use `time.Now()`, do whatever you need.
 - **Handlers return Continuations** describing when to resume and what to do next.
 - **Declarative retry policies** just like Temporal (b/c it's just Temporal under the hood)
-- **"Managed" workflow progression**: the library interprets the Continuations and handles control flow, retries, timers, message passing, and continue-as-new
+- **Managed workflow progression**: the library is solely responsible for workflow-level control flow, retries, timers, message passing, and continue-as-new
 
 ## Examples
 
@@ -114,10 +114,16 @@ Full example: [`docs/howto/booking/`](docs/howto/booking/booking.go)
 | **Continue-as-new** | Transparent | User managed | N/A | N/A |
 | **Durable** | Yes (using Temporal) | Yes | No | No |
 
+## Design Principles
+
+- **Return errors as early as possible.** Prefer compile-time errors (via generics), then startup-time validation,
+  then runtime errors.
+
 ## Inspirations
 
 - **[Temporal](https://temporal.io/)** — the durability engine underneath
 - **[Elixir GenServer](https://hexdocs.pm/elixir/GenServer.html)** — actor model semantics; the handler-returns-continuation loop mirrors GenServer callbacks
-- **Go goroutines & channels** — the mental model for concurrency
+- **Go goroutines & channels** — the native primitives this library tries to stay close to in spirit
+- **[Continuation-passing style](https://en.wikipedia.org/wiki/Continuation-passing_style)** — functions that return an explicit Continuation (the remaining work), making control flow explicit
 - **[River](https://riverqueue.com/)** — type-safe registration via self-identifying `Kind()` types
 - **[iWF](https://github.com/indeedeng/iwf)** — similar goal of moving user code out of the replay-safe workflow function
