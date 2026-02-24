@@ -1,7 +1,7 @@
 // Package saga demonstrates the SAGA compensation pattern using terminal error
 // handlers. Each booking step runs as its own activity with independent retries.
 // When all retries are exhausted, the terminal error handler runs compensation
-// logic (cancelling previously booked services) instead of failing the stateroutine.
+// logic (cancelling previously booked services) instead of failing the routine.
 //
 // Continue checkpoints state between steps so that if the worker crashes after
 // booking a flight but before booking a hotel, the flight confirmation is
@@ -13,7 +13,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/raymondji/stateroutine/stateroutine"
+	"github.com/raymondji/durableroutine-go/durable"
 )
 
 // --- Per-step state types ---
@@ -62,14 +62,14 @@ type TripService struct {
 	BookCarFn    func(ctx context.Context, carID string) (string, error)    // if non-nil, replaces default
 }
 
-func (s *TripService) BookFlight(ctx *stateroutine.Context, state TripState) (*stateroutine.Suspend[TripResult], error) {
+func (s *TripService) BookFlight(ctx *durable.Context, state TripState) (*durable.Continuation[TripResult], error) {
 	flightConf, err := s.bookFlight(ctx, state.FlightID)
 	if err != nil {
 		return nil, fmt.Errorf("book flight: %w", err)
 	}
 
 	fmt.Printf("trip %s: flight booked (%s)\n", state.TripID, flightConf)
-	return stateroutine.Continue(s.BookHotel, FlightBookedState{
+	return durable.Continue(s.BookHotel, FlightBookedState{
 		TripID:             state.TripID,
 		HotelID:            state.HotelID,
 		CarRentalID:        state.CarRentalID,
@@ -77,14 +77,14 @@ func (s *TripService) BookFlight(ctx *stateroutine.Context, state TripState) (*s
 	}), nil
 }
 
-func (s *TripService) BookHotel(ctx *stateroutine.Context, state FlightBookedState) (*stateroutine.Suspend[TripResult], error) {
+func (s *TripService) BookHotel(ctx *durable.Context, state FlightBookedState) (*durable.Continuation[TripResult], error) {
 	hotelConf, err := s.bookHotel(ctx, state.HotelID)
 	if err != nil {
 		return nil, fmt.Errorf("book hotel: %w", err)
 	}
 
 	fmt.Printf("trip %s: hotel booked (%s)\n", state.TripID, hotelConf)
-	return stateroutine.Continue(s.BookCar, HotelBookedState{
+	return durable.Continue(s.BookCar, HotelBookedState{
 		TripID:             state.TripID,
 		CarRentalID:        state.CarRentalID,
 		FlightConfirmation: state.FlightConfirmation,
@@ -92,26 +92,26 @@ func (s *TripService) BookHotel(ctx *stateroutine.Context, state FlightBookedSta
 	}), nil
 }
 
-func (s *TripService) CompensateHotel(ctx *stateroutine.Context, state FlightBookedState, err error) (*stateroutine.Suspend[TripResult], error) {
+func (s *TripService) CompensateHotel(ctx *durable.Context, state FlightBookedState, err error) (*durable.Continuation[TripResult], error) {
 	s.cancelFlight(ctx, state.FlightConfirmation)
 	return nil, fmt.Errorf("book hotel failed, compensated flight: %w", err)
 }
 
-func (s *TripService) BookCar(ctx *stateroutine.Context, state HotelBookedState) (*stateroutine.Suspend[TripResult], error) {
+func (s *TripService) BookCar(ctx *durable.Context, state HotelBookedState) (*durable.Continuation[TripResult], error) {
 	carConf, err := s.bookCar(ctx, state.CarRentalID)
 	if err != nil {
 		return nil, fmt.Errorf("book car: %w", err)
 	}
 
 	fmt.Printf("trip %s: car booked (%s), trip fully booked\n", state.TripID, carConf)
-	return stateroutine.Done(TripResult{
+	return durable.Done(TripResult{
 		FlightConfirmation: state.FlightConfirmation,
 		HotelConfirmation:  state.HotelConfirmation,
 		CarConfirmation:    carConf,
 	}), nil
 }
 
-func (s *TripService) CompensateCar(ctx *stateroutine.Context, state HotelBookedState, err error) (*stateroutine.Suspend[TripResult], error) {
+func (s *TripService) CompensateCar(ctx *durable.Context, state HotelBookedState, err error) (*durable.Continuation[TripResult], error) {
 	s.cancelHotel(ctx, state.HotelConfirmation)
 	s.cancelFlight(ctx, state.FlightConfirmation)
 	return nil, fmt.Errorf("book car failed, compensated hotel and flight: %w", err)
@@ -158,18 +158,18 @@ func (s *TripService) cancelHotel(_ context.Context, confirmation string) {
 }
 
 // RegisterHandlers registers all saga handlers with the worker.
-func RegisterHandlers(w *stateroutine.Worker, svc *TripService) {
-	stateroutine.RegisterHandler(w, svc.BookFlight, stateroutine.HandlerOptions{
-		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
+func RegisterHandlers(w *durable.Worker, svc *TripService) {
+	durable.RegisterHandler(w, svc.BookFlight, durable.HandlerOptions{
+		RetryPolicy: durable.RetryPolicy{MaxAttempts: 3},
 	})
-	stateroutine.RegisterHandler(w, svc.BookHotel, stateroutine.HandlerOptions{
-		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
-	}).WithTerminalErrorHandler(svc.CompensateHotel, stateroutine.HandlerOptions{
-		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 1},
+	durable.RegisterHandler(w, svc.BookHotel, durable.HandlerOptions{
+		RetryPolicy: durable.RetryPolicy{MaxAttempts: 3},
+	}).WithTerminalErrorHandler(svc.CompensateHotel, durable.HandlerOptions{
+		RetryPolicy: durable.RetryPolicy{MaxAttempts: 1},
 	})
-	stateroutine.RegisterHandler(w, svc.BookCar, stateroutine.HandlerOptions{
-		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
-	}).WithTerminalErrorHandler(svc.CompensateCar, stateroutine.HandlerOptions{
-		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 1},
+	durable.RegisterHandler(w, svc.BookCar, durable.HandlerOptions{
+		RetryPolicy: durable.RetryPolicy{MaxAttempts: 3},
+	}).WithTerminalErrorHandler(svc.CompensateCar, durable.HandlerOptions{
+		RetryPolicy: durable.RetryPolicy{MaxAttempts: 1},
 	})
 }

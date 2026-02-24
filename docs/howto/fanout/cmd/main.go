@@ -7,9 +7,9 @@ import (
 
 	temporalclient "go.temporal.io/sdk/client"
 
-	"github.com/raymondji/stateroutine/docs/howto/fanout"
-	"github.com/raymondji/stateroutine/stateroutine"
-	"github.com/raymondji/stateroutine/temporalimpl"
+	"github.com/raymondji/durableroutine-go/docs/howto/fanout"
+	"github.com/raymondji/durableroutine-go/durable"
+	"github.com/raymondji/durableroutine-go/backend/temporal"
 )
 
 func main() {
@@ -24,10 +24,10 @@ func main() {
 	fanoutSvc := &fanout.FanoutService{}
 	itemSvc := &fanout.ItemService{}
 
-	w := stateroutine.NewWorker("fanout-queue")
+	w := durable.NewWorker("fanout-queue")
 	fanout.RegisterHandlers(w, fanoutSvc, itemSvc)
 
-	tw := temporalimpl.NewWorker(tc, w)
+	tw := temporal.NewWorker(tc, w)
 	go func() {
 		if err := tw.Start(); err != nil {
 			log.Fatal(err)
@@ -35,9 +35,9 @@ func main() {
 	}()
 	defer tw.Stop()
 
-	client := stateroutine.NewClientFrom(temporalimpl.NewClient(tc, "fanout-queue"))
+	client := durable.NewClientFrom(temporal.NewClient(tc, "fanout-queue"))
 
-	h, err := stateroutine.Start(client, ctx, "batch-001", fanoutSvc.StartItems, fanout.FanoutState{
+	h, err := durable.Go(client, ctx, "batch-001", fanoutSvc.StartItems, fanout.FanoutState{
 		Items: []struct {
 			ID   string
 			Data string

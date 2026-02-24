@@ -1,7 +1,3 @@
-// Package testenv provides shared test setup for running howto integration
-// tests against a backend. Currently backed by Temporal (localhost:7233).
-// When memoryimpl arrives, swap the implementation here — test files stay
-// unchanged because they only depend on stateroutine.Client.
 package testenv
 
 import (
@@ -11,19 +7,13 @@ import (
 
 	temporalclient "go.temporal.io/sdk/client"
 
-	"github.com/raymondji/stateroutine/stateroutine"
-	"github.com/raymondji/stateroutine/temporalimpl"
+	"github.com/raymondji/durableroutine-go/backend/temporal"
+	"github.com/raymondji/durableroutine-go/durable"
 )
 
-// Env is the test environment returned by Setup.
-type Env struct {
-	Client   stateroutine.Client
-	UniqueID func(prefix string) string
-}
-
-// Setup creates a Temporal client, unique task queue, registers handlers via
+// SetupTemporal creates a Temporal client, unique task queue, registers handlers via
 // registerFn, starts a worker, and returns an Env ready for testing.
-func Setup(t *testing.T, registerFn func(w *stateroutine.Worker)) *Env {
+func SetupTemporal(t *testing.T, registerFn func(w *durable.Worker)) *Env {
 	t.Helper()
 
 	tc, err := temporalclient.Dial(temporalclient.Options{
@@ -36,10 +26,10 @@ func Setup(t *testing.T, registerFn func(w *stateroutine.Worker)) *Env {
 
 	taskQueue := fmt.Sprintf("test-%s-%d", t.Name(), time.Now().UnixNano())
 
-	w := stateroutine.NewWorker(taskQueue)
+	w := durable.NewWorker(taskQueue)
 	registerFn(w)
 
-	tw := temporalimpl.NewWorker(tc, w)
+	tw := temporal.NewWorker(tc, w)
 	go func() {
 		if err := tw.Start(); err != nil {
 			t.Logf("worker start error: %v", err)
@@ -50,8 +40,8 @@ func Setup(t *testing.T, registerFn func(w *stateroutine.Worker)) *Env {
 	// Give worker time to start polling.
 	time.Sleep(500 * time.Millisecond)
 
-	client := temporalimpl.NewClient(tc, taskQueue)
-	srClient := stateroutine.NewClientFrom(client)
+	client := temporal.NewClient(tc, taskQueue)
+	srClient := durable.NewClientFrom(client)
 
 	return &Env{
 		Client: srClient,

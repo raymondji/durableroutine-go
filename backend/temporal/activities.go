@@ -1,11 +1,11 @@
-package temporalimpl
+package temporal
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 
-	"github.com/raymondji/stateroutine/stateroutine"
+	"github.com/raymondji/durableroutine-go/durable"
 )
 
 type registry struct {
@@ -13,8 +13,8 @@ type registry struct {
 }
 
 type registryEntry struct {
-	runner  stateroutine.HandlerRunner
-	options stateroutine.HandlerOptions
+	runner  durable.HandlerRunner
+	options durable.HandlerOptions
 }
 
 type handlerActivity struct {
@@ -28,7 +28,7 @@ func (a *handlerActivity) RunHandler(ctx context.Context, input ActivityInput) (
 		return ActivityOutput{}, fmt.Errorf("no handler registered for key: %s", input.HandlerKey)
 	}
 
-	sctx := stateroutine.NewContext(ctx, input.StateroutineID)
+	sctx := durable.NewContext(ctx, input.RoutineID)
 
 	runOut, err := entry.runner(sctx, input.State, input.Message, input.Error)
 	if err != nil {
@@ -40,13 +40,13 @@ func (a *handlerActivity) RunHandler(ctx context.Context, input ActivityInput) (
 		output.Done = true
 		output.Result = runOut.Result
 	} else {
-		suspend := &SerializedSuspend{Cases: make([]SerializedCase, len(runOut.Cases))}
+		cont := &SerializedContinuation{Cases: make([]SerializedCase, len(runOut.Cases))}
 		for i, c := range runOut.Cases {
 			stateBytes, err := json.Marshal(c.State())
 			if err != nil {
 				return ActivityOutput{}, fmt.Errorf("marshal case state: %w", err)
 			}
-			suspend.Cases[i] = SerializedCase{
+			cont.Cases[i] = SerializedCase{
 				TimerDuration: c.TimerDuration(),
 				SendName:      c.SendName(),
 				CallName:      c.CallName(),
@@ -55,7 +55,7 @@ func (a *handlerActivity) RunHandler(ctx context.Context, input ActivityInput) (
 				HandlerKey:    c.HandlerKey(),
 			}
 		}
-		output.Suspend = suspend
+		output.Continuation = cont
 	}
 	output.CallResponse = runOut.CallResponse
 
@@ -76,9 +76,9 @@ func (a *handlerActivity) RunHandler(ctx context.Context, input ActivityInput) (
 			return ActivityOutput{}, fmt.Errorf("marshal start state: %w", err)
 		}
 		output.StartRequests = append(output.StartRequests, StartEntry{
-			StateroutineID: sr.StateroutineID,
-			StateKind:      sr.StateKind,
-			State:          stateBytes,
+			RoutineID: sr.RoutineID,
+			StateKind: sr.StateKind,
+			State:     stateBytes,
 		})
 	}
 	for _, sr := range sctx.SendRequests() {
@@ -87,10 +87,10 @@ func (a *handlerActivity) RunHandler(ctx context.Context, input ActivityInput) (
 			return ActivityOutput{}, fmt.Errorf("marshal send msg: %w", err)
 		}
 		output.SendRequests = append(output.SendRequests, SendEntry{
-			StateroutineID: sr.StateroutineID,
-			StateKind:      sr.StateKind,
-			MsgKind:        sr.MsgKind,
-			Msg:            msgBytes,
+			RoutineID: sr.RoutineID,
+			StateKind: sr.StateKind,
+			MsgKind:   sr.MsgKind,
+			Msg:       msgBytes,
 		})
 	}
 

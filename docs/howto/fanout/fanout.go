@@ -1,17 +1,17 @@
-// Package fanout demonstrates fan-out/fan-in using child stateroutines and
-// stateroutine-to-stateroutine Send. Each child runs as its own durable
-// stateroutine with independent retries, timeouts, and event history. Children
-// send results back to the parent via stateroutine.BufferSend.
+// Package fanout demonstrates fan-out/fan-in using child routines and
+// routine-to-routine Send. Each child runs as its own durable
+// routine with independent retries, timeouts, and event history. Children
+// send results back to the parent via durable.BufferSend.
 // Uses struct-based handlers for dependency injection.
 package fanout
 
 import (
 	"fmt"
 
-	"github.com/raymondji/stateroutine/stateroutine"
+	"github.com/raymondji/durableroutine-go/durable"
 )
 
-// --- Child stateroutine ---
+// --- Child routine ---
 
 type ItemState struct {
 	ID       string
@@ -30,7 +30,7 @@ type ItemResult struct {
 
 func (ItemResult) Kind() string { return "results" }
 
-// --- Parent stateroutine ---
+// --- Parent routine ---
 
 type FanoutState struct {
 	Items []struct {
@@ -60,8 +60,8 @@ type FanoutService struct {
 	// Injected dependencies would go here.
 }
 
-func (s *FanoutService) StartItems(ctx *stateroutine.Context, state FanoutState) (*stateroutine.Suspend[FanoutResult], error) {
-	parentID := ctx.StateroutineID()
+func (s *FanoutService) StartItems(ctx *durable.Context, state FanoutState) (*durable.Continuation[FanoutResult], error) {
+	parentID := ctx.RoutineID()
 
 	for _, item := range state.Items {
 		ctx.BufferStart(fmt.Sprintf("item-%s", item.ID),
@@ -69,19 +69,15 @@ func (s *FanoutService) StartItems(ctx *stateroutine.Context, state FanoutState)
 	}
 
 	collecting := CollectingState{Pending: len(state.Items)}
-	return stateroutine.Select[FanoutResult](
-		stateroutine.OnSend(s.CollectResult, collecting),
-	), nil
+	return durable.ReceiveSend(s.CollectResult, collecting), nil
 }
 
-func (s *FanoutService) CollectResult(ctx *stateroutine.Context, state CollectingState, result ItemResult) (*stateroutine.Suspend[FanoutResult], error) {
+func (s *FanoutService) CollectResult(ctx *durable.Context, state CollectingState, result ItemResult) (*durable.Continuation[FanoutResult], error) {
 	state.Results = append(state.Results, result)
 	state.Pending--
 
 	if state.Pending > 0 {
-		return stateroutine.Select[FanoutResult](
-			stateroutine.OnSend(s.CollectResult, state),
-		), nil
+		return durable.ReceiveSend(s.CollectResult, state), nil
 	}
 
 	// All children done.
@@ -89,7 +85,7 @@ func (s *FanoutService) CollectResult(ctx *stateroutine.Context, state Collectin
 	for _, r := range state.Results {
 		fmt.Printf("  %s: %s\n", r.ID, r.Output)
 	}
-	return stateroutine.Done(FanoutResult{Results: state.Results}), nil
+	return durable.Done(FanoutResult{Results: state.Results}), nil
 }
 
 // --- Item processor service ---
@@ -98,7 +94,7 @@ type ItemService struct {
 	// Injected dependencies would go here.
 }
 
-func (s *ItemService) ProcessItem(ctx *stateroutine.Context, state ItemState) (*stateroutine.Suspend[stateroutine.Unit], error) {
+func (s *ItemService) ProcessItem(ctx *durable.Context, state ItemState) (*durable.Continuation[durable.Unit], error) {
 	result := ItemResult{
 		ID:     state.ID,
 		Output: fmt.Sprintf("processed: %s", state.Data),
@@ -106,13 +102,13 @@ func (s *ItemService) ProcessItem(ctx *stateroutine.Context, state ItemState) (*
 
 	// Send result back to the parent — like ch <- result.
 	var stub *FanoutService
-	stateroutine.BufferSend(ctx, state.ParentID, stub.CollectResult, result)
-	return stateroutine.Done(stateroutine.Unit{}), nil
+	durable.BufferSend(ctx, state.ParentID, stub.CollectResult, result)
+	return durable.Done(durable.Unit{}), nil
 }
 
 // RegisterHandlers registers all fanout handlers with the worker.
-func RegisterHandlers(w *stateroutine.Worker, fanoutSvc *FanoutService, itemSvc *ItemService) {
-	stateroutine.RegisterHandler(w, fanoutSvc.StartItems, stateroutine.HandlerOptions{})
-	stateroutine.RegisterHandler(w, itemSvc.ProcessItem, stateroutine.HandlerOptions{})
-	stateroutine.RegisterSendHandler(w, fanoutSvc.CollectResult, stateroutine.HandlerOptions{})
+func RegisterHandlers(w *durable.Worker, fanoutSvc *FanoutService, itemSvc *ItemService) {
+	durable.RegisterHandler(w, fanoutSvc.StartItems, durable.HandlerOptions{})
+	durable.RegisterHandler(w, itemSvc.ProcessItem, durable.HandlerOptions{})
+	durable.RegisterSendHandler(w, fanoutSvc.CollectResult, durable.HandlerOptions{})
 }

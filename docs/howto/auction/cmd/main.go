@@ -8,9 +8,9 @@ import (
 
 	temporalclient "go.temporal.io/sdk/client"
 
-	"github.com/raymondji/stateroutine/docs/howto/auction"
-	"github.com/raymondji/stateroutine/stateroutine"
-	"github.com/raymondji/stateroutine/temporalimpl"
+	"github.com/raymondji/durableroutine-go/backend/temporal"
+	"github.com/raymondji/durableroutine-go/docs/howto/auction"
+	"github.com/raymondji/durableroutine-go/durable"
 )
 
 func main() {
@@ -24,10 +24,10 @@ func main() {
 
 	svc := &auction.AuctionService{}
 
-	w := stateroutine.NewWorker("auction-queue")
+	w := durable.NewWorker("auction-queue")
 	auction.RegisterHandlers(w, svc)
 
-	tw := temporalimpl.NewWorker(tc, w)
+	tw := temporal.NewWorker(tc, w)
 	go func() {
 		if err := tw.Start(); err != nil {
 			log.Fatal(err)
@@ -35,9 +35,9 @@ func main() {
 	}()
 	defer tw.Stop()
 
-	client := stateroutine.NewClientFrom(temporalimpl.NewClient(tc, "auction-queue"))
+	client := durable.NewClientFrom(temporal.NewClient(tc, "auction-queue"))
 
-	h, err := stateroutine.Start(client, ctx, "auction-001", svc.OpenAuction, auction.AuctionState{
+	h, err := durable.Go(client, ctx, "auction-001", svc.OpenAuction, auction.AuctionState{
 		ItemName:    "Vintage Guitar",
 		StartingBid: 100.00,
 		Duration:    1 * time.Hour,
@@ -47,7 +47,7 @@ func main() {
 	}
 
 	// Alice bids $150 — should be accepted.
-	resp, err := stateroutine.ClientCall(client, ctx, "auction-001", svc.PlaceBid, auction.PlaceBidReq{
+	resp, err := durable.Call(client, ctx, "auction-001", svc.PlaceBid, auction.PlaceBidReq{
 		BidderID: "alice",
 		Amount:   150.00,
 	})
@@ -57,7 +57,7 @@ func main() {
 	fmt.Printf("alice's bid: accepted=%v, message=%q\n", resp.Accepted, resp.Message)
 
 	// Bob bids $120 — should be rejected (too low).
-	resp, err = stateroutine.ClientCall(client, ctx, "auction-001", svc.PlaceBid, auction.PlaceBidReq{
+	resp, err = durable.Call(client, ctx, "auction-001", svc.PlaceBid, auction.PlaceBidReq{
 		BidderID: "bob",
 		Amount:   120.00,
 	})
@@ -67,7 +67,7 @@ func main() {
 	fmt.Printf("bob's bid: accepted=%v, message=%q\n", resp.Accepted, resp.Message)
 
 	// Bob bids $200 — should be accepted.
-	resp, err = stateroutine.ClientCall(client, ctx, "auction-001", svc.PlaceBid, auction.PlaceBidReq{
+	resp, err = durable.Call(client, ctx, "auction-001", svc.PlaceBid, auction.PlaceBidReq{
 		BidderID: "bob",
 		Amount:   200.00,
 	})
@@ -77,7 +77,7 @@ func main() {
 	fmt.Printf("bob's bid: accepted=%v, message=%q\n", resp.Accepted, resp.Message)
 
 	// Check current auction status via query.
-	status, err := stateroutine.ClientQuery(client, ctx, "auction-001", auction.AuctionStatusResp{})
+	status, err := durable.Query(client, ctx, "auction-001", auction.AuctionStatusResp{})
 	if err != nil {
 		log.Fatal(err)
 	}

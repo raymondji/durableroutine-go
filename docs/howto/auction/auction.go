@@ -3,16 +3,16 @@
 // was accepted or outbid. The auction runs until a timer expires, then
 // completes with the winning bid. Current status is available via ClientQuery.
 //
-// Also demonstrates OnCallTerminalError: if bid processing fails after all
+// Also demonstrates ReceiveCallTerminalError: if bid processing fails after all
 // retries, the terminal error handler returns an error response to the blocked
-// caller instead of failing the entire stateroutine.
+// caller instead of failing the entire routine.
 package auction
 
 import (
 	"fmt"
 	"time"
 
-	"github.com/raymondji/stateroutine/stateroutine"
+	"github.com/raymondji/durableroutine-go/durable"
 )
 
 // --- State ---
@@ -76,7 +76,7 @@ type AuctionService struct {
 	// Injected dependencies would go here (e.g., notification service).
 }
 
-func (s *AuctionService) OpenAuction(ctx *stateroutine.Context, state AuctionState) (*stateroutine.Suspend[AuctionResult], error) {
+func (s *AuctionService) OpenAuction(ctx *durable.Context, state AuctionState) (*durable.Continuation[AuctionResult], error) {
 	fmt.Printf("auction opened for %q, starting bid: $%.2f\n", state.ItemName, state.StartingBid)
 
 	bidding := BiddingState{
@@ -85,26 +85,26 @@ func (s *AuctionService) OpenAuction(ctx *stateroutine.Context, state AuctionSta
 		HighestBid: state.StartingBid,
 	}
 
-	stateroutine.SetQueryResult(ctx, AuctionStatusResp{
+	durable.SetQueryResult(ctx, AuctionStatusResp{
 		ItemName:   bidding.ItemName,
 		HighestBid: bidding.HighestBid,
 	})
 
-	return stateroutine.Select[AuctionResult](
-		stateroutine.OnCall(s.PlaceBid, bidding),
-		stateroutine.OnTimer(state.Duration, s.CloseAuction, bidding),
+	return durable.Select(
+		durable.ReceiveCall(s.PlaceBid, bidding),
+		durable.After(state.Duration, s.CloseAuction, bidding),
 	), nil
 }
 
-func (s *AuctionService) PlaceBid(ctx *stateroutine.Context, state BiddingState, req PlaceBidReq) (PlaceBidResp, *stateroutine.Suspend[AuctionResult], error) {
+func (s *AuctionService) PlaceBid(ctx *durable.Context, state BiddingState, req PlaceBidReq) (PlaceBidResp, *durable.Continuation[AuctionResult], error) {
 	if req.Amount <= state.HighestBid {
 		return PlaceBidResp{
 				Accepted:   false,
 				HighestBid: state.HighestBid,
 				Message:    fmt.Sprintf("bid too low, current highest is $%.2f", state.HighestBid),
-			}, stateroutine.Select[AuctionResult](
-				stateroutine.OnCall(s.PlaceBid, state),
-				stateroutine.OnTimer(state.Duration, s.CloseAuction, state),
+			}, durable.Select(
+				durable.ReceiveCall(s.PlaceBid, state),
+				durable.After(state.Duration, s.CloseAuction, state),
 			), nil
 	}
 
@@ -115,7 +115,7 @@ func (s *AuctionService) PlaceBid(ctx *stateroutine.Context, state BiddingState,
 	state.Leader = req.BidderID
 	state.BidCount++
 
-	stateroutine.SetQueryResult(ctx, AuctionStatusResp{
+	durable.SetQueryResult(ctx, AuctionStatusResp{
 		ItemName:   state.ItemName,
 		HighestBid: state.HighestBid,
 		Leader:     state.Leader,
@@ -126,26 +126,26 @@ func (s *AuctionService) PlaceBid(ctx *stateroutine.Context, state BiddingState,
 			Accepted:   true,
 			HighestBid: state.HighestBid,
 			Message:    "bid accepted, you are the highest bidder",
-		}, stateroutine.Select[AuctionResult](
-			stateroutine.OnCall(s.PlaceBid, state),
-			stateroutine.OnTimer(state.Duration, s.CloseAuction, state),
+		}, durable.Select(
+			durable.ReceiveCall(s.PlaceBid, state),
+			durable.After(state.Duration, s.CloseAuction, state),
 		), nil
 }
 
-func (s *AuctionService) BidFailed(ctx *stateroutine.Context, state BiddingState, req PlaceBidReq, err error) (PlaceBidResp, *stateroutine.Suspend[AuctionResult], error) {
+func (s *AuctionService) BidFailed(ctx *durable.Context, state BiddingState, req PlaceBidReq, err error) (PlaceBidResp, *durable.Continuation[AuctionResult], error) {
 	fmt.Printf("bid by %s for $%.2f failed after all retries: %v\n",
 		req.BidderID, req.Amount, err)
 
 	return PlaceBidResp{
 			Accepted: false,
 			Message:  fmt.Sprintf("bid processing failed: %v", err),
-		}, stateroutine.Select[AuctionResult](
-			stateroutine.OnCall(s.PlaceBid, state),
-			stateroutine.OnTimer(state.Duration, s.CloseAuction, state),
+		}, durable.Select(
+			durable.ReceiveCall(s.PlaceBid, state),
+			durable.After(state.Duration, s.CloseAuction, state),
 		), nil
 }
 
-func (s *AuctionService) CloseAuction(ctx *stateroutine.Context, state BiddingState) (*stateroutine.Suspend[AuctionResult], error) {
+func (s *AuctionService) CloseAuction(ctx *durable.Context, state BiddingState) (*durable.Continuation[AuctionResult], error) {
 	if state.Leader == "" {
 		fmt.Printf("auction for %q closed with no bids\n", state.ItemName)
 	} else {
@@ -153,7 +153,7 @@ func (s *AuctionService) CloseAuction(ctx *stateroutine.Context, state BiddingSt
 			state.ItemName, state.Leader, state.HighestBid)
 	}
 
-	return stateroutine.Done(AuctionResult{
+	return durable.Done(AuctionResult{
 		ItemName: state.ItemName,
 		Winner:   state.Leader,
 		Amount:   state.HighestBid,
@@ -162,10 +162,10 @@ func (s *AuctionService) CloseAuction(ctx *stateroutine.Context, state BiddingSt
 }
 
 // RegisterHandlers registers all auction handlers with the worker.
-func RegisterHandlers(w *stateroutine.Worker, svc *AuctionService) {
-	stateroutine.RegisterHandler(w, svc.OpenAuction, stateroutine.HandlerOptions{})
-	stateroutine.RegisterCallHandler(w, svc.PlaceBid, stateroutine.HandlerOptions{
-		RetryPolicy: stateroutine.RetryPolicy{MaxAttempts: 3},
-	}).WithTerminalErrorHandler(svc.BidFailed, stateroutine.HandlerOptions{})
-	stateroutine.RegisterHandler(w, svc.CloseAuction, stateroutine.HandlerOptions{})
+func RegisterHandlers(w *durable.Worker, svc *AuctionService) {
+	durable.RegisterHandler(w, svc.OpenAuction, durable.HandlerOptions{})
+	durable.RegisterCallHandler(w, svc.PlaceBid, durable.HandlerOptions{
+		RetryPolicy: durable.RetryPolicy{MaxAttempts: 3},
+	}).WithTerminalErrorHandler(svc.BidFailed, durable.HandlerOptions{})
+	durable.RegisterHandler(w, svc.CloseAuction, durable.HandlerOptions{})
 }

@@ -1,4 +1,4 @@
-package temporalimpl
+package temporal
 
 import (
 	"encoding/json"
@@ -6,16 +6,18 @@ import (
 	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
-	"go.temporal.io/sdk/temporal"
+	temporalsdk "go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
+
+	"github.com/raymondji/durableroutine-go/internal/durablecore"
 )
 
 type workflowHandler struct {
 	reg *registry
 }
 
-// StateroutineWorkflow is the single workflow function for all stateroutines.
-func (wh *workflowHandler) StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error) {
+// RoutineWorkflow is the single workflow function for all stateroutines.
+func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error) {
 	var ha *handlerActivity
 
 	handlerKey := input.HandlerKey
@@ -44,7 +46,7 @@ func (wh *workflowHandler) StateroutineWorkflow(ctx workflow.Context, input Work
 
 	callNotifyCh := workflow.NewChannel(ctx)
 
-	// message carries the received signal/call message into the next activity.
+	// message carries the received send/call message into the next activity.
 	var message json.RawMessage
 
 	// callHandlerOutput stores the output from a call handler processed in the
@@ -63,10 +65,10 @@ func (wh *workflowHandler) StateroutineWorkflow(ctx workflow.Context, input Work
 		} else {
 			// 1. Run the handler as an activity.
 			activityInput := ActivityInput{
-				HandlerKey:     handlerKey,
-				StateroutineID: workflow.GetInfo(ctx).WorkflowExecution.ID,
-				State:          state,
-				Message:        message,
+				HandlerKey: handlerKey,
+				RoutineID:  workflow.GetInfo(ctx).WorkflowExecution.ID,
+				State:      state,
+				Message:    message,
 			}
 			message = nil // consumed
 
@@ -78,11 +80,11 @@ func (wh *workflowHandler) StateroutineWorkflow(ctx workflow.Context, input Work
 				teKey := wh.lookupTerminalErrorKey(handlerKey)
 				if teKey != "" {
 					teInput := ActivityInput{
-						HandlerKey:     teKey,
-						StateroutineID: activityInput.StateroutineID,
-						State:          state,
-						Message:        activityInput.Message,
-						Error:          err.Error(),
+						HandlerKey: teKey,
+						RoutineID:  activityInput.RoutineID,
+						State:      state,
+						Message:    activityInput.Message,
+						Error:      err.Error(),
 					}
 					teActivityCtx := workflow.WithActivityOptions(ctx, wh.lookupActivityOptions(teKey))
 					err = workflow.ExecuteActivity(teActivityCtx, ha.RunHandler, teInput).Get(ctx, &output)
@@ -110,25 +112,25 @@ func (wh *workflowHandler) StateroutineWorkflow(ctx workflow.Context, input Work
 		// 3. Handle child starts.
 		for _, start := range output.StartRequests {
 			childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
-				WorkflowID:        start.StateroutineID,
+				WorkflowID:        start.RoutineID,
 				ParentClosePolicy: enumspb.PARENT_CLOSE_POLICY_ABANDON,
 			})
 			childInput := WorkflowInput{
-				HandlerKey: "handler:" + start.StateKind,
+				HandlerKey: durablecore.HandlerKey(start.StateKind),
 				State:      start.State,
 			}
-			workflow.ExecuteChildWorkflow(childCtx, wh.StateroutineWorkflow, childInput)
+			workflow.ExecuteChildWorkflow(childCtx, wh.RoutineWorkflow, childInput)
 		}
 
 		// 4. Handle send requests — wait for each signal to be acknowledged.
 		for _, sr := range output.SendRequests {
-			signalName := "send:" + sr.StateKind + ":" + sr.MsgKind
-			f := workflow.SignalExternalWorkflow(ctx, sr.StateroutineID, "", signalName, sr.Msg)
+			signalName := durablecore.SendKey(sr.StateKind, sr.MsgKind)
+			f := workflow.SignalExternalWorkflow(ctx, sr.RoutineID, "", signalName, sr.Msg)
 			if err := f.Get(ctx, nil); err != nil {
 				// Signal delivery failed (e.g., target workflow not found).
 				// Log but continue — best-effort delivery.
 				workflow.GetLogger(ctx).Warn("signal delivery failed",
-					"target", sr.StateroutineID, "signal", signalName, "error", err)
+					"target", sr.RoutineID, "signal", signalName, "error", err)
 			}
 		}
 
@@ -137,21 +139,21 @@ func (wh *workflowHandler) StateroutineWorkflow(ctx workflow.Context, input Work
 			return output.Result, nil
 		}
 
-		// 6. Interpret Suspend cases.
-		suspend := output.Suspend
-		if suspend == nil || len(suspend.Cases) == 0 {
-			return nil, fmt.Errorf("handler %s returned no suspend cases and is not done", handlerKey)
+		// 6. Interpret Continuation cases.
+		cont := output.Continuation
+		if cont == nil || len(cont.Cases) == 0 {
+			return nil, fmt.Errorf("handler %s returned no continuation cases and is not done", handlerKey)
 		}
 
 		// If the only case is immediate (Continue), skip the selector.
-		if len(suspend.Cases) == 1 && suspend.Cases[0].Immediate {
-			handlerKey = suspend.Cases[0].HandlerKey
-			state = suspend.Cases[0].State
+		if len(cont.Cases) == 1 && cont.Cases[0].Immediate {
+			handlerKey = cont.Cases[0].HandlerKey
+			state = cont.Cases[0].State
 			goto continueAsNewCheck
 		}
 
-		// Register Update handlers for OnCall cases.
-		for _, c := range suspend.Cases {
+		// Register Update handlers for ReceiveCall cases.
+		for _, c := range cont.Cases {
 			if c.CallName == "" {
 				continue
 			}
@@ -183,7 +185,7 @@ func (wh *workflowHandler) StateroutineWorkflow(ctx workflow.Context, input Work
 			sel := workflow.NewSelector(ctx)
 
 			// Priority 1: Timers
-			for _, c := range suspend.Cases {
+			for _, c := range cont.Cases {
 				if c.TimerDuration == nil {
 					continue
 				}
@@ -197,7 +199,7 @@ func (wh *workflowHandler) StateroutineWorkflow(ctx workflow.Context, input Work
 
 			// Priority 2: Calls (via notification channel)
 			hasCallCases := false
-			for _, c := range suspend.Cases {
+			for _, c := range cont.Cases {
 				if c.CallName != "" {
 					hasCallCases = true
 					break
@@ -212,10 +214,10 @@ func (wh *workflowHandler) StateroutineWorkflow(ctx workflow.Context, input Work
 					pendingCalls = pendingCalls[1:]
 
 					callInput := ActivityInput{
-						HandlerKey:     pc.handlerKey,
-						StateroutineID: workflow.GetInfo(ctx).WorkflowExecution.ID,
-						State:          pc.state,
-						Message:        pc.req,
+						HandlerKey: pc.handlerKey,
+						RoutineID:  workflow.GetInfo(ctx).WorkflowExecution.ID,
+						State:      pc.state,
+						Message:    pc.req,
 					}
 
 					callActivityCtx := workflow.WithActivityOptions(ctx, wh.lookupActivityOptions(pc.handlerKey))
@@ -226,19 +228,19 @@ func (wh *workflowHandler) StateroutineWorkflow(ctx workflow.Context, input Work
 						teKey := wh.lookupTerminalErrorKey(pc.handlerKey)
 						if teKey != "" {
 							teInput := ActivityInput{
-								HandlerKey:     teKey,
-								StateroutineID: workflow.GetInfo(ctx).WorkflowExecution.ID,
-								State:          pc.state,
-								Message:        pc.req,
-								Error:          err.Error(),
+								HandlerKey: teKey,
+								RoutineID:  workflow.GetInfo(ctx).WorkflowExecution.ID,
+								State:      pc.state,
+								Message:    pc.req,
+								Error:      err.Error(),
 							}
 							teActivityCtx := workflow.WithActivityOptions(ctx, wh.lookupActivityOptions(teKey))
 							var teOutput ActivityOutput
 							teErr := workflow.ExecuteActivity(teActivityCtx, ha.RunHandler, teInput).Get(ctx, &teOutput)
 							if teErr != nil {
 								pc.responseCh.Send(ctx, teErr)
-								// Re-use current suspend to re-establish the same wait.
-								callHandlerOutput = &ActivityOutput{Suspend: suspend}
+								// Re-use current continuation to re-establish the same wait.
+								callHandlerOutput = &ActivityOutput{Continuation: cont}
 								return
 							}
 							pc.responseCh.Send(ctx, teOutput.CallResponse)
@@ -246,8 +248,8 @@ func (wh *workflowHandler) StateroutineWorkflow(ctx workflow.Context, input Work
 							return
 						}
 						pc.responseCh.Send(ctx, err)
-						// Re-use current suspend to re-establish the same wait.
-						callHandlerOutput = &ActivityOutput{Suspend: suspend}
+						// Re-use current continuation to re-establish the same wait.
+						callHandlerOutput = &ActivityOutput{Continuation: cont}
 						return
 					}
 
@@ -257,7 +259,7 @@ func (wh *workflowHandler) StateroutineWorkflow(ctx workflow.Context, input Work
 			}
 
 			// Priority 3: Sends (via Temporal signal channels)
-			for _, c := range suspend.Cases {
+			for _, c := range cont.Cases {
 				if c.SendName == "" {
 					continue
 				}
@@ -275,7 +277,7 @@ func (wh *workflowHandler) StateroutineWorkflow(ctx workflow.Context, input Work
 			}
 
 			// Priority 4: Default
-			for _, c := range suspend.Cases {
+			for _, c := range cont.Cases {
 				if !c.Immediate {
 					continue
 				}
@@ -292,7 +294,7 @@ func (wh *workflowHandler) StateroutineWorkflow(ctx workflow.Context, input Work
 	continueAsNewCheck:
 		// Skip CAN when a call handler output is pending — the next loop
 		// iteration must consume it first (it may complete the workflow or
-		// establish the next suspend state).
+		// establish the next continuation state).
 		shouldCAN := callHandlerOutput == nil && workflow.GetInfo(ctx).GetContinueAsNewSuggested()
 		if callHandlerOutput == nil && input.MaxHistoryLength > 0 && workflow.GetInfo(ctx).GetCurrentHistoryLength() > int(input.MaxHistoryLength) {
 			shouldCAN = true
@@ -303,10 +305,10 @@ func (wh *workflowHandler) StateroutineWorkflow(ctx workflow.Context, input Work
 				pendingCalls = pendingCalls[1:]
 
 				callInput := ActivityInput{
-					HandlerKey:     pc.handlerKey,
-					StateroutineID: workflow.GetInfo(ctx).WorkflowExecution.ID,
-					State:          pc.state,
-					Message:        pc.req,
+					HandlerKey: pc.handlerKey,
+					RoutineID:  workflow.GetInfo(ctx).WorkflowExecution.ID,
+					State:      pc.state,
+					Message:    pc.req,
 				}
 				callActivityCtx := workflow.WithActivityOptions(ctx, wh.lookupActivityOptions(pc.handlerKey))
 				var callOutput ActivityOutput
@@ -317,13 +319,13 @@ func (wh *workflowHandler) StateroutineWorkflow(ctx workflow.Context, input Work
 				}
 				pc.responseCh.Send(ctx, callOutput.CallResponse)
 
-				if callOutput.Suspend != nil && len(callOutput.Suspend.Cases) > 0 {
-					handlerKey = callOutput.Suspend.Cases[0].HandlerKey
-					state = callOutput.Suspend.Cases[0].State
+				if callOutput.Continuation != nil && len(callOutput.Continuation.Cases) > 0 {
+					handlerKey = callOutput.Continuation.Cases[0].HandlerKey
+					state = callOutput.Continuation.Cases[0].State
 				}
 			}
 
-			return nil, workflow.NewContinueAsNewError(ctx, wh.StateroutineWorkflow, WorkflowInput{
+			return nil, workflow.NewContinueAsNewError(ctx, wh.RoutineWorkflow, WorkflowInput{
 				HandlerKey:       handlerKey,
 				State:            state,
 				QueryResults:     allQueryResults,
@@ -351,7 +353,7 @@ func (wh *workflowHandler) lookupActivityOptions(handlerKey string) workflow.Act
 	}
 	rp := entry.options.RetryPolicy
 	if rp.MaxAttempts > 0 || rp.InitialInterval > 0 || rp.MaxInterval > 0 || rp.BackoffCoefficient > 0 {
-		trp := &temporal.RetryPolicy{}
+		trp := &temporalsdk.RetryPolicy{}
 		if rp.MaxAttempts > 0 {
 			trp.MaximumAttempts = int32(rp.MaxAttempts)
 		}

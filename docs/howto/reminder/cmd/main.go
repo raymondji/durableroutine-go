@@ -7,9 +7,9 @@ import (
 
 	temporalclient "go.temporal.io/sdk/client"
 
-	"github.com/raymondji/stateroutine/docs/howto/reminder"
-	"github.com/raymondji/stateroutine/stateroutine"
-	"github.com/raymondji/stateroutine/temporalimpl"
+	"github.com/raymondji/durableroutine-go/docs/howto/reminder"
+	"github.com/raymondji/durableroutine-go/durable"
+	"github.com/raymondji/durableroutine-go/backend/temporal"
 )
 
 func main() {
@@ -23,10 +23,10 @@ func main() {
 
 	svc := &reminder.ReminderService{}
 
-	w := stateroutine.NewWorker("reminder-queue")
+	w := durable.NewWorker("reminder-queue")
 	reminder.RegisterHandlers(w, svc)
 
-	tw := temporalimpl.NewWorker(tc, w)
+	tw := temporal.NewWorker(tc, w)
 	go func() {
 		if err := tw.Start(); err != nil {
 			log.Fatal(err)
@@ -34,8 +34,8 @@ func main() {
 	}()
 	defer tw.Stop()
 
-	client := stateroutine.NewClientFrom(temporalimpl.NewClient(tc, "reminder-queue"))
-	if _, err := stateroutine.Start(client, ctx, "reminder-user-42",
+	client := durable.NewClientFrom(temporal.NewClient(tc, "reminder-queue"))
+	if _, err := durable.Go(client, ctx, "reminder-user-42",
 		svc.SendInitial, reminder.InitialState{Email: "user@example.com"}); err != nil {
 		log.Fatal(err)
 	}

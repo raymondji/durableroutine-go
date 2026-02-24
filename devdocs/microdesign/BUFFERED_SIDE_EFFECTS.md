@@ -1,12 +1,12 @@
 # Buffered Side Effects (BufferStart / BufferSend)
 
-The core issue: `ctx.BufferStart(...)` and `BufferSend(ctx, ...)` buffer requests that only take effect after the handler returns its `Suspend` value, not immediately. The naming should make this clear.
+The core issue: `ctx.BufferStart(...)` and `BufferSend(ctx, ...)` buffer requests that only take effect after the handler returns its `Continuation` value, not immediately. The naming should make this clear.
 
 **Option A: Prefix with Buffer** (`BufferStart`, `BufferSend`)
 - Signals intent in the name itself — "Buffer" is the closest Go idiom for "collect now, flush later".
 - Works naturally in loops, conditionals, and error handling.
 
-**Option B: Fold into Suspend return value** — e.g. `Suspend(Select(...), Start(...), Send(...))`
+**Option B: Fold into Continuation return value** — e.g. `Continuation(Select(...), Start(...), Send(...))`
 - Consistent with the declarative model — everything the handler wants to happen is expressed in the return value.
 - But fanout and pipeline examples call `BufferSend`/`BufferStart` in loops (variable number of calls), which doesn't fit a single return value cleanly. Would need a builder or variadic approach that's more awkward than imperative calls.
 

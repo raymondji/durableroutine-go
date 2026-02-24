@@ -7,9 +7,9 @@ import (
 
 	temporalclient "go.temporal.io/sdk/client"
 
-	"github.com/raymondji/stateroutine/docs/howto/saga"
-	"github.com/raymondji/stateroutine/stateroutine"
-	"github.com/raymondji/stateroutine/temporalimpl"
+	"github.com/raymondji/durableroutine-go/docs/howto/saga"
+	"github.com/raymondji/durableroutine-go/durable"
+	"github.com/raymondji/durableroutine-go/backend/temporal"
 )
 
 func main() {
@@ -23,10 +23,10 @@ func main() {
 
 	svc := &saga.TripService{}
 
-	w := stateroutine.NewWorker("saga-queue")
+	w := durable.NewWorker("saga-queue")
 	saga.RegisterHandlers(w, svc)
 
-	tw := temporalimpl.NewWorker(tc, w)
+	tw := temporal.NewWorker(tc, w)
 	go func() {
 		if err := tw.Start(); err != nil {
 			log.Fatal(err)
@@ -34,9 +34,9 @@ func main() {
 	}()
 	defer tw.Stop()
 
-	client := stateroutine.NewClientFrom(temporalimpl.NewClient(tc, "saga-queue"))
+	client := durable.NewClientFrom(temporal.NewClient(tc, "saga-queue"))
 
-	h, err := stateroutine.Start(client, ctx, "trip-789", svc.BookFlight, saga.TripState{
+	h, err := durable.Go(client, ctx, "trip-789", svc.BookFlight, saga.TripState{
 		TripID:      "TRIP-789",
 		FlightID:    "FL-100",
 		HotelID:     "HT-200",

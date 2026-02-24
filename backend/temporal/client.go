@@ -1,5 +1,5 @@
-// Package temporalimpl implements stateroutine backed by Temporal.
-package temporalimpl
+// Package temporal implements routine backed by Temporal.
+package temporal
 
 import (
 	"context"
@@ -9,10 +9,11 @@ import (
 	"go.temporal.io/api/enums/v1"
 	temporalclient "go.temporal.io/sdk/client"
 
-	"github.com/raymondji/stateroutine/stateroutine"
+	"github.com/raymondji/durableroutine-go/durable"
+	"github.com/raymondji/durableroutine-go/internal/durablecore"
 )
 
-// Client implements stateroutine.ClientImpl backed by Temporal.
+// Client implements durable.ClientImpl backed by Temporal.
 type Client struct {
 	temporal  temporalclient.Client
 	taskQueue string
@@ -23,14 +24,14 @@ type Client struct {
 	MaxHistoryLength int32
 }
 
-var _ stateroutine.ClientImpl = (*Client)(nil)
+var _ durable.ClientImpl = (*Client)(nil)
 
-// NewClient creates a stateroutine Client backed by the given Temporal client.
+// NewClient creates a durable Client backed by the given Temporal client.
 func NewClient(tc temporalclient.Client, taskQueue string) *Client {
 	return &Client{temporal: tc, taskQueue: taskQueue}
 }
 
-func (c *Client) Start(ctx context.Context, id string, kind string, state any) error {
+func (c *Client) Go(ctx context.Context, id string, kind string, state any) error {
 	stateBytes, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("marshal state: %w", err)
@@ -41,22 +42,22 @@ func (c *Client) Start(ctx context.Context, id string, kind string, state any) e
 		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
 	}
 	input := WorkflowInput{
-		HandlerKey:       "handler:" + kind,
+		HandlerKey:       durablecore.HandlerKey(kind),
 		State:            stateBytes,
 		MaxHistoryLength: c.MaxHistoryLength,
 	}
 	var wh *workflowHandler
-	_, err = c.temporal.ExecuteWorkflow(ctx, opts, wh.StateroutineWorkflow, input)
+	_, err = c.temporal.ExecuteWorkflow(ctx, opts, wh.RoutineWorkflow, input)
 	return err
 }
 
 func (c *Client) Send(ctx context.Context, id string, stateKind string, msgKind string, msg any) error {
-	signalName := "send:" + stateKind + ":" + msgKind
+	signalName := durablecore.SendKey(stateKind, msgKind)
 	return c.temporal.SignalWorkflow(ctx, id, "", signalName, msg)
 }
 
 func (c *Client) Call(ctx context.Context, id string, stateKind string, reqKind string, req any) (any, error) {
-	updateName := "call:" + stateKind + ":" + reqKind
+	updateName := durablecore.CallKey(stateKind, reqKind)
 	handle, err := c.temporal.UpdateWorkflow(ctx, temporalclient.UpdateWorkflowOptions{
 		WorkflowID:   id,
 		UpdateName:   updateName,

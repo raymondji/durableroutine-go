@@ -1,5 +1,5 @@
-// Package order demonstrates a durable stateroutine that waits for messages
-// using Select/OnSend, modelling an order lifecycle with Send + timer + Query.
+// Package order demonstrates a durable routine that waits for messages
+// using Select/ReceiveSend, modelling an order lifecycle with Send + timer + Query.
 // Uses struct-based handlers for dependency injection.
 package order
 
@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/raymondji/stateroutine/stateroutine"
+	"github.com/raymondji/durableroutine-go/durable"
 )
 
 // --- State ---
@@ -68,19 +68,19 @@ type OrderService struct {
 	ShipTimeout   time.Duration // if zero, defaults to 24h
 }
 
-func (s *OrderService) CreateOrder(ctx *stateroutine.Context, _ OrderState) (*stateroutine.Suspend[OrderResult], error) {
-	stateroutine.SetQueryResult(ctx, StatusResp{Status: "pending"})
+func (s *OrderService) CreateOrder(ctx *durable.Context, _ OrderState) (*durable.Continuation[OrderResult], error) {
+	durable.SetQueryResult(ctx, StatusResp{Status: "pending"})
 	expireTimeout := 30 * time.Minute
 	if s.ExpireTimeout > 0 {
 		expireTimeout = s.ExpireTimeout
 	}
-	return stateroutine.Select[OrderResult](
-		stateroutine.OnSend(s.PlaceOrder, PendingState{}),
-		stateroutine.OnTimer(expireTimeout, s.ExpireOrder, PendingState{}),
+	return durable.Select(
+		durable.ReceiveSend(s.PlaceOrder, PendingState{}),
+		durable.After(expireTimeout, s.ExpireOrder, PendingState{}),
 	), nil
 }
 
-func (s *OrderService) PlaceOrder(ctx *stateroutine.Context, _ PendingState, req PlaceOrderReq) (*stateroutine.Suspend[OrderResult], error) {
+func (s *OrderService) PlaceOrder(ctx *durable.Context, _ PendingState, req PlaceOrderReq) (*durable.Continuation[OrderResult], error) {
 	fmt.Printf("placing order %s\n", req.OrderID)
 	placed := PlacedState{OrderID: req.OrderID, Items: req.Items}
 
@@ -88,33 +88,33 @@ func (s *OrderService) PlaceOrder(ctx *stateroutine.Context, _ PendingState, req
 	if s.ShipTimeout > 0 {
 		shipTimeout = s.ShipTimeout
 	}
-	stateroutine.SetQueryResult(ctx, StatusResp{Status: "placed", OrderID: req.OrderID})
-	return stateroutine.Select[OrderResult](
-		stateroutine.OnSend(s.CancelOrder, placed),
-		stateroutine.OnTimer(shipTimeout, s.ShipOrder, placed),
+	durable.SetQueryResult(ctx, StatusResp{Status: "placed", OrderID: req.OrderID})
+	return durable.Select(
+		durable.ReceiveSend(s.CancelOrder, placed),
+		durable.After(shipTimeout, s.ShipOrder, placed),
 	), nil
 }
 
-func (s *OrderService) CancelOrder(ctx *stateroutine.Context, state PlacedState, _ CancelOrderReq) (*stateroutine.Suspend[OrderResult], error) {
+func (s *OrderService) CancelOrder(ctx *durable.Context, state PlacedState, _ CancelOrderReq) (*durable.Continuation[OrderResult], error) {
 	fmt.Printf("cancelling order %s\n", state.OrderID)
-	return stateroutine.Done(OrderResult{Status: "cancelled", OrderID: state.OrderID}), nil
+	return durable.Done(OrderResult{Status: "cancelled", OrderID: state.OrderID}), nil
 }
 
-func (s *OrderService) ShipOrder(ctx *stateroutine.Context, state PlacedState) (*stateroutine.Suspend[OrderResult], error) {
+func (s *OrderService) ShipOrder(ctx *durable.Context, state PlacedState) (*durable.Continuation[OrderResult], error) {
 	fmt.Printf("shipping order %s\n", state.OrderID)
-	return stateroutine.Done(OrderResult{Status: "shipped", OrderID: state.OrderID}), nil
+	return durable.Done(OrderResult{Status: "shipped", OrderID: state.OrderID}), nil
 }
 
-func (s *OrderService) ExpireOrder(ctx *stateroutine.Context, _ PendingState) (*stateroutine.Suspend[OrderResult], error) {
+func (s *OrderService) ExpireOrder(ctx *durable.Context, _ PendingState) (*durable.Continuation[OrderResult], error) {
 	fmt.Println("order timed out, no placement received")
-	return stateroutine.Done(OrderResult{Status: "timed_out"}), nil
+	return durable.Done(OrderResult{Status: "timed_out"}), nil
 }
 
 // RegisterHandlers registers all order handlers with the worker.
-func RegisterHandlers(w *stateroutine.Worker, svc *OrderService) {
-	stateroutine.RegisterHandler(w, svc.CreateOrder, stateroutine.HandlerOptions{})
-	stateroutine.RegisterSendHandler(w, svc.PlaceOrder, stateroutine.HandlerOptions{})
-	stateroutine.RegisterSendHandler(w, svc.CancelOrder, stateroutine.HandlerOptions{})
-	stateroutine.RegisterHandler(w, svc.ShipOrder, stateroutine.HandlerOptions{})
-	stateroutine.RegisterHandler(w, svc.ExpireOrder, stateroutine.HandlerOptions{})
+func RegisterHandlers(w *durable.Worker, svc *OrderService) {
+	durable.RegisterHandler(w, svc.CreateOrder, durable.HandlerOptions{})
+	durable.RegisterSendHandler(w, svc.PlaceOrder, durable.HandlerOptions{})
+	durable.RegisterSendHandler(w, svc.CancelOrder, durable.HandlerOptions{})
+	durable.RegisterHandler(w, svc.ShipOrder, durable.HandlerOptions{})
+	durable.RegisterHandler(w, svc.ExpireOrder, durable.HandlerOptions{})
 }

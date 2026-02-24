@@ -1,4 +1,4 @@
-package stateroutine
+package durable
 
 import "time"
 
@@ -6,7 +6,7 @@ import "time"
 // Fields map to Temporal's native retry policy.
 // When all retries are exhausted and a terminal error handler is registered
 // (via WithTerminalErrorHandler on the registration), the terminal error handler is
-// invoked instead of failing the stateroutine.
+// invoked instead of failing the routine.
 type RetryPolicy struct {
 	MaxAttempts        int
 	InitialInterval    time.Duration

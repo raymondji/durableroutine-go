@@ -1,4 +1,4 @@
-module github.com/raymondji/stateroutine
+module github.com/raymondji/durableroutine-go
 
 go 1.23.0
 

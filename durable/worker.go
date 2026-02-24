@@ -1,4 +1,4 @@
-package stateroutine
+package durable
 
 // Worker registers routine definitions and polls Temporal for work.
 type Worker struct {
@@ -7,8 +7,7 @@ type Worker struct {
 }
 
 // NewWorker creates a Worker that polls the given task queue.
-// Register handlers using the Add* package-level functions before calling Start.
-// TODO: accept Temporal connection options.
+// Register handlers using the Register* package-level functions before starting.
 func NewWorker(taskQueue string) *Worker {
 	return &Worker{
 		taskQueue: taskQueue,

@@ -7,9 +7,9 @@ import (
 
 	temporalclient "go.temporal.io/sdk/client"
 
-	"github.com/raymondji/stateroutine/docs/howto/order"
-	"github.com/raymondji/stateroutine/stateroutine"
-	"github.com/raymondji/stateroutine/temporalimpl"
+	"github.com/raymondji/durableroutine-go/backend/temporal"
+	"github.com/raymondji/durableroutine-go/docs/howto/order"
+	"github.com/raymondji/durableroutine-go/durable"
 )
 
 func main() {
@@ -23,10 +23,10 @@ func main() {
 
 	svc := &order.OrderService{}
 
-	w := stateroutine.NewWorker("order-queue")
+	w := durable.NewWorker("order-queue")
 	order.RegisterHandlers(w, svc)
 
-	tw := temporalimpl.NewWorker(tc, w)
+	tw := temporal.NewWorker(tc, w)
 	go func() {
 		if err := tw.Start(); err != nil {
 			log.Fatal(err)
@@ -34,20 +34,20 @@ func main() {
 	}()
 	defer tw.Stop()
 
-	client := stateroutine.NewClientFrom(temporalimpl.NewClient(tc, "order-queue"))
+	client := durable.NewClientFrom(temporal.NewClient(tc, "order-queue"))
 
-	h, err := stateroutine.Start(client, ctx, "order-123", svc.CreateOrder, order.OrderState{})
+	h, err := durable.Go(client, ctx, "order-123", svc.CreateOrder, order.OrderState{})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	status, err := stateroutine.ClientQuery(client, ctx, "order-123", order.StatusResp{})
+	status, err := durable.Query(client, ctx, "order-123", order.StatusResp{})
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Printf("status: %s\n", status.Status)
 
-	if err := stateroutine.ClientSend(client, ctx, "order-123", svc.PlaceOrder, order.PlaceOrderReq{
+	if err := durable.Send(client, ctx, "order-123", svc.PlaceOrder, order.PlaceOrderReq{
 		OrderID:       "ORD-456",
 		Items:         []string{"widget-a", "widget-b"},
 		PaymentMethod: "card",
@@ -56,7 +56,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Wait for the stateroutine to complete and get the result.
+	// Wait for the routine to complete and get the result.
 	result, err := h.Get(ctx)
 	if err != nil {
 		log.Fatal(err)
