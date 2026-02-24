@@ -10,12 +10,13 @@
 
 ## Show me some code
 
-A booking flow: reserve an item, wait for payment or cancellation, then ship. Each handler does its work and returns what to wait for next.
+A booking flow: reserve an item, wait for payment or cancellation, then ship.
 
 ```go
 func (s *BookingService) ReserveItem(ctx *durable.Context, state BookingState) (*durable.Continuation[BookingResult], error) {
     reserved := ReservedState{UserID: state.UserID, ItemID: state.ItemID}
     durable.SetQueryResult(ctx, StatusResp{Status: "reserved"})
+
     return durable.Select(
         durable.ReceiveSend(s.ProcessPayment, reserved),               // wait for payment message
         durable.ReceiveCall(s.CancelBooking, reserved),                // wait for cancel request
@@ -27,15 +28,18 @@ func (s *BookingService) ProcessPayment(ctx *durable.Context, state ReservedStat
     chargeCard(msg.CardNumber)
     paid := PaidState{UserID: state.UserID, ItemID: state.ItemID, PaymentID: "PAY-123"}
     durable.SetQueryResult(ctx, StatusResp{Status: "paid", PaymentID: paid.PaymentID})
+
     return durable.Select(
-        durable.ReceiveSend(s.ProcessShipping, paid),
+        durable.ReceiveSend(s.RefundPayment, paid),
         durable.After(24*time.Hour, s.ProcessShipping, paid),
     ), nil
 }
 
-// If payment fails after all retries, release the reservation instead of crashing.
+// If payment fails after all retries, run compensations.
 func (s *BookingService) PaymentFailed(ctx *durable.Context, state ReservedState, msg PaymentInfo, err error) (*durable.Continuation[BookingResult], error) {
+    refundPaymentIfPaid(state.ItemID)
     releaseReservation(state.ItemID)
+
     return durable.Done(BookingResult{Status: "payment_failed"}), nil
 }
 ```
