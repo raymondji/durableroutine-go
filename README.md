@@ -1,6 +1,6 @@
 # Durable Routines for Go
 
-A Go library that gives you durable, distributed goroutines — powered by the battle-tested [Temporal](https://temporal.io/).
+"Durable goroutines" powered by the battle-tested [Temporal](https://temporal.io/).
 
 ## What are Durable Routines?
 
