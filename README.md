@@ -28,8 +28,8 @@ func (s *BookingService) ProcessPayment(ctx *durable.Context, state ReservedStat
     paid := PaidState{UserID: state.UserID, ItemID: state.ItemID, PaymentID: "PAY-123"}
     durable.SetQueryResult(ctx, StatusResp{Status: "paid", PaymentID: paid.PaymentID})
     return durable.Select(
-        durable.ReceiveSend(s.ProcessShipping, paid),
-        durable.After(24*time.Hour, s.ExpireShipping, paid),
+        durable.ReceiveSend(s.ProcessRefund, paid),
+        durable.After(24*time.Hour, s.ProcessShipping, paid),
     ), nil
 }
 
@@ -37,11 +37,6 @@ func (s *BookingService) ProcessPayment(ctx *durable.Context, state ReservedStat
 func (s *BookingService) PaymentFailed(ctx *durable.Context, state ReservedState, msg PaymentInfo, err error) (*durable.Continuation[BookingResult], error) {
     releaseReservation(state.ItemID)
     return durable.Done(BookingResult{Status: "payment_failed"}), nil
-}
-
-func RegisterHandlers(w *durable.Worker, svc *BookingService) {
-
-    // ... remaining handlers
 }
 ```
 
@@ -77,10 +72,6 @@ func main() {
     // Send payment info (fire-and-forget message).
     durable.Send(client, ctx, "booking-123", svc.ProcessPayment,
         PaymentInfo{CardNumber: "4111111111111234", Expiry: "12/27"})
-
-    // Send shipping info.
-    durable.Send(client, ctx, "booking-123", svc.ProcessShipping,
-        ShippingInfo{Address: "123 Main St", City: "Springfield", Zip: "62704"})
 
     // Wait for the routine to complete and get the typed result.
     result, _ := h.Get(ctx)
