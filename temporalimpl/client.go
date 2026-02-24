@@ -3,6 +3,7 @@ package temporalimpl
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"go.temporal.io/api/enums/v1"
@@ -30,6 +31,10 @@ func NewClient(tc temporalclient.Client, taskQueue string) *Client {
 }
 
 func (c *Client) Start(ctx context.Context, id string, kind string, state any) error {
+	stateBytes, err := json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("marshal state: %w", err)
+	}
 	opts := temporalclient.StartWorkflowOptions{
 		ID:                    id,
 		TaskQueue:             c.taskQueue,
@@ -37,10 +42,10 @@ func (c *Client) Start(ctx context.Context, id string, kind string, state any) e
 	}
 	input := WorkflowInput{
 		HandlerKey:       "handler:" + kind,
-		State:            state,
+		State:            stateBytes,
 		MaxHistoryLength: c.MaxHistoryLength,
 	}
-	_, err := c.temporal.ExecuteWorkflow(ctx, opts, StateroutineWorkflow, input)
+	_, err = c.temporal.ExecuteWorkflow(ctx, opts, StateroutineWorkflow, input)
 	return err
 }
 

@@ -1,11 +1,14 @@
 package temporalimpl
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // WorkflowInput is the input to StateroutineWorkflow.
 type WorkflowInput struct {
 	HandlerKey       string       `json:"handlerKey"`
-	State            any          `json:"state"`
+	State            json.RawMessage `json:"state"`
 	QueryResults     []QueryEntry `json:"queryResults,omitempty"`
 	MaxHistoryLength int32        `json:"maxHistoryLength,omitempty"`
 }
@@ -13,27 +16,27 @@ type WorkflowInput struct {
 // QueryEntry is a query name + result pair preserved across continue-as-new.
 type QueryEntry struct {
 	QueryName string `json:"queryName"`
-	Result    any    `json:"result"`
+	Result    json.RawMessage `json:"result"`
 }
 
 // ActivityInput is passed to the RunHandler activity.
 type ActivityInput struct {
 	HandlerKey     string `json:"handlerKey"`
 	StateroutineID string `json:"stateroutineID"`
-	State          any    `json:"state"`
-	Message        any    `json:"message,omitempty"`
+	State          json.RawMessage `json:"state"`
+	Message        json.RawMessage `json:"message,omitempty"`
 	Error          string `json:"error,omitempty"`
 }
 
 // ActivityOutput is returned by the RunHandler activity.
 type ActivityOutput struct {
 	Done          bool              `json:"done"`
-	Result        any               `json:"result,omitempty"`
+	Result        json.RawMessage   `json:"result,omitempty"`
 	Suspend       *SerializedSuspend `json:"suspend,omitempty"`
 	QueryResults  []QueryEntry      `json:"queryResults,omitempty"`
 	StartRequests []StartEntry      `json:"startRequests,omitempty"`
 	SendRequests  []SendEntry       `json:"sendRequests,omitempty"`
-	CallResponse  any               `json:"callResponse,omitempty"`
+	CallResponse  json.RawMessage   `json:"callResponse,omitempty"`
 }
 
 // SerializedSuspend is the wire format for a Suspend value.
@@ -47,21 +50,21 @@ type SerializedCase struct {
 	SendName      string         `json:"sendName,omitempty"`
 	CallName      string         `json:"callName,omitempty"`
 	Immediate     bool           `json:"immediate,omitempty"`
-	State         any            `json:"state"`
-	HandlerKey    string         `json:"handlerKey"`
+	State         json.RawMessage `json:"state"`
+	HandlerKey    string          `json:"handlerKey"`
 }
 
 // StartEntry is a request to start a child stateroutine.
 type StartEntry struct {
 	StateroutineID string `json:"stateroutineID"`
 	StateKind      string `json:"stateKind"`
-	State          any    `json:"state"`
+	State          json.RawMessage `json:"state"`
 }
 
 // SendEntry is a request to send a signal to another stateroutine.
 type SendEntry struct {
-	StateroutineID string `json:"stateroutineID"`
-	StateKind      string `json:"stateKind"`
-	MsgKind        string `json:"msgKind"`
-	Msg            any    `json:"msg"`
+	StateroutineID string          `json:"stateroutineID"`
+	StateKind      string          `json:"stateKind"`
+	MsgKind        string          `json:"msgKind"`
+	Msg            json.RawMessage `json:"msg"`
 }

@@ -1,6 +1,7 @@
 package temporalimpl
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 // StateroutineWorkflow is the single workflow function for all stateroutines.
 func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error) {
 	handlerKey := input.HandlerKey
-	state := input.State
+	var state json.RawMessage = input.State
 
 	// Restore query results from previous execution (continue-as-new).
 	allQueryResults := append([]QueryEntry{}, input.QueryResults...)
@@ -29,8 +30,8 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
 	// Pending calls queue.
 	type pendingCall struct {
 		handlerKey string
-		req        any
-		state      any // state from the suspend case
+		req        json.RawMessage
+		state      json.RawMessage
 		responseCh workflow.Channel
 	}
 	var pendingCalls []pendingCall
@@ -38,7 +39,7 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
 	callNotifyCh := workflow.NewChannel(ctx)
 
 	// message carries the received signal/call message into the next activity.
-	var message any
+	var message json.RawMessage
 
 	// callHandlerOutput stores the output from a call handler processed in the
 	// selector callback. When set, the main loop skips step 1 (running the
@@ -151,7 +152,7 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
 			c := c
 			// Use HandlerKey as the update name — matches the client's "call:{stateKind}:{reqKind}".
 			workflow.SetUpdateHandler(ctx, c.HandlerKey,
-				func(ctx workflow.Context, req any) (any, error) {
+				func(ctx workflow.Context, req json.RawMessage) (any, error) {
 					responseCh := workflow.NewChannel(ctx)
 					pendingCalls = append(pendingCalls, pendingCall{
 						handlerKey: c.HandlerKey,
@@ -259,7 +260,7 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
 				compositeName := "send:" + c.HandlerKey[len("send:"):]
 				signalCh := workflow.GetSignalChannel(ctx, compositeName)
 				sel.AddReceive(signalCh, func(ch workflow.ReceiveChannel, more bool) {
-					var msg any
+					var msg json.RawMessage
 					ch.Receive(ctx, &msg)
 					handlerKey = c.HandlerKey
 					state = c.State

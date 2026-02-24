@@ -25,7 +25,7 @@ func (w *Worker) TaskQueue() string {
 func (w *Worker) Handlers() map[string]HandlerEntry {
 	out := make(map[string]HandlerEntry, len(w.handlers))
 	for k, e := range w.handlers {
-		out[k] = HandlerEntry{Handler: e.handler, Options: e.options}
+		out[k] = HandlerEntry{Handler: e.handler, Options: e.options, Runner: e.runner}
 	}
 	return out
 }
@@ -34,4 +34,5 @@ func (w *Worker) Handlers() map[string]HandlerEntry {
 type HandlerEntry struct {
 	Handler any
 	Options HandlerOptions
+	Runner  HandlerRunner
 }
