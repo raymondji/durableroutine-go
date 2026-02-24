@@ -57,11 +57,15 @@ func TestBatchCancelMidBatch(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 
-		// Use a large number of items so the batch takes several seconds,
-		// giving us time to send a cancel signal.
+		// Use enough items so the batch takes a while (especially with
+		// Temporal activity overhead per chunk), giving us time to send a
+		// cancel signal. Keep it under Temporal's 2 MB payload limit —
+		// ProcessingState carries the full items slice through each
+		// continuation. 50k items ≈ 1.3 MB serialized (2 cases).
+		const numItems = 50000
 		id := env.UniqueID("batch-cancel")
 		h, err := durable.Go(env.Client, ctx, id, svc.StartBatch, batch.BatchState{
-			Items: makeItems(100000),
+			Items: makeItems(numItems),
 		})
 		if err != nil {
 			t.Fatalf("Go failed: %v", err)
@@ -69,7 +73,8 @@ func TestBatchCancelMidBatch(t *testing.T) {
 
 		// Send cancel after a short delay. The signal is buffered and
 		// picked up when the routine reaches a Select with ReceiveSend.
-		time.Sleep(2 * time.Second)
+		// 500 ms is enough for some chunks to process but not all 50k items.
+		time.Sleep(500 * time.Millisecond)
 
 		err = durable.Send(env.Client, ctx, id, svc.CancelBatch, batch.CancelMsg{Reason: "test cancel"})
 		if err != nil {
@@ -88,9 +93,9 @@ func TestBatchCancelMidBatch(t *testing.T) {
 		if result.Processed < 100 {
 			t.Fatalf("expected at least 100 items processed, got %d", result.Processed)
 		}
-		if result.Processed >= 100000 {
+		if result.Processed >= numItems {
 			t.Fatal("expected cancel to stop processing before completion")
 		}
-		t.Logf("Batch cancel: processed=%d out of 100000", result.Processed)
+		t.Logf("Batch cancel: processed=%d out of %d", result.Processed, numItems)
 	})
 }
