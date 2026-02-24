@@ -3,7 +3,6 @@ package temporalimpl
 import (
 	temporalclient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
-	"go.temporal.io/sdk/workflow"
 
 	"github.com/raymondji/stateroutine/stateroutine"
 )
@@ -26,15 +25,12 @@ func NewWorker(tc temporalclient.Client, w *stateroutine.Worker) *Worker {
 			options: entry.Options,
 		}
 	}
-	globalRegistry = reg
 
-	// Register the workflow.
-	tw.RegisterWorkflowWithOptions(StateroutineWorkflow, workflow.RegisterOptions{
-		Name: "StateroutineWorkflow",
-	})
-
-	// Register the activity.
-	tw.RegisterActivity(RunHandler)
+	// Register the workflow and activity using struct-based dependency injection.
+	ha := &handlerActivity{reg: reg}
+	wh := &workflowHandler{reg: reg}
+	tw.RegisterWorkflow(wh.StateroutineWorkflow)
+	tw.RegisterActivity(ha)
 
 	return &Worker{inner: tw}
 }

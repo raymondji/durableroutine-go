@@ -8,9 +8,6 @@ import (
 	"github.com/raymondji/stateroutine/stateroutine"
 )
 
-// globalRegistry is set during worker creation and used by RunHandler.
-var globalRegistry *registry
-
 type registry struct {
 	entries map[string]registryEntry
 }
@@ -20,13 +17,13 @@ type registryEntry struct {
 	options stateroutine.HandlerOptions
 }
 
-// RunHandler is the Temporal activity that executes user handlers.
-func RunHandler(ctx context.Context, input ActivityInput) (ActivityOutput, error) {
-	if globalRegistry == nil {
-		return ActivityOutput{}, fmt.Errorf("handler registry not initialized")
-	}
+type handlerActivity struct {
+	reg *registry
+}
 
-	entry, ok := globalRegistry.entries[input.HandlerKey]
+// RunHandler is the Temporal activity that executes user handlers.
+func (a *handlerActivity) RunHandler(ctx context.Context, input ActivityInput) (ActivityOutput, error) {
+	entry, ok := a.reg.entries[input.HandlerKey]
 	if !ok {
 		return ActivityOutput{}, fmt.Errorf("no handler registered for key: %s", input.HandlerKey)
 	}

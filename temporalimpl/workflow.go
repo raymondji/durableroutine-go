@@ -10,8 +10,14 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
+type workflowHandler struct {
+	reg *registry
+}
+
 // StateroutineWorkflow is the single workflow function for all stateroutines.
-func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error) {
+func (wh *workflowHandler) StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error) {
+	var ha *handlerActivity
+
 	handlerKey := input.HandlerKey
 	var state json.RawMessage = input.State
 
@@ -64,12 +70,12 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
 			}
 			message = nil // consumed
 
-			activityCtx := workflow.WithActivityOptions(ctx, lookupActivityOptions(handlerKey))
+			activityCtx := workflow.WithActivityOptions(ctx, wh.lookupActivityOptions(handlerKey))
 
-			err := workflow.ExecuteActivity(activityCtx, RunHandler, activityInput).Get(ctx, &output)
+			err := workflow.ExecuteActivity(activityCtx, ha.RunHandler, activityInput).Get(ctx, &output)
 
 			if err != nil {
-				teKey := lookupTerminalErrorKey(handlerKey)
+				teKey := wh.lookupTerminalErrorKey(handlerKey)
 				if teKey != "" {
 					teInput := ActivityInput{
 						HandlerKey:     teKey,
@@ -78,8 +84,8 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
 						Message:        activityInput.Message,
 						Error:          err.Error(),
 					}
-					teActivityCtx := workflow.WithActivityOptions(ctx, lookupActivityOptions(teKey))
-					err = workflow.ExecuteActivity(teActivityCtx, RunHandler, teInput).Get(ctx, &output)
+					teActivityCtx := workflow.WithActivityOptions(ctx, wh.lookupActivityOptions(teKey))
+					err = workflow.ExecuteActivity(teActivityCtx, ha.RunHandler, teInput).Get(ctx, &output)
 					if err != nil {
 						return nil, err
 					}
@@ -111,7 +117,7 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
 				HandlerKey: "handler:" + start.StateKind,
 				State:      start.State,
 			}
-			workflow.ExecuteChildWorkflow(childCtx, StateroutineWorkflow, childInput)
+			workflow.ExecuteChildWorkflow(childCtx, wh.StateroutineWorkflow, childInput)
 		}
 
 		// 4. Handle send requests — wait for each signal to be acknowledged.
@@ -212,12 +218,12 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
 						Message:        pc.req,
 					}
 
-					callActivityCtx := workflow.WithActivityOptions(ctx, lookupActivityOptions(pc.handlerKey))
+					callActivityCtx := workflow.WithActivityOptions(ctx, wh.lookupActivityOptions(pc.handlerKey))
 
 					var callOutput ActivityOutput
-					err := workflow.ExecuteActivity(callActivityCtx, RunHandler, callInput).Get(ctx, &callOutput)
+					err := workflow.ExecuteActivity(callActivityCtx, ha.RunHandler, callInput).Get(ctx, &callOutput)
 					if err != nil {
-						teKey := lookupTerminalErrorKey(pc.handlerKey)
+						teKey := wh.lookupTerminalErrorKey(pc.handlerKey)
 						if teKey != "" {
 							teInput := ActivityInput{
 								HandlerKey:     teKey,
@@ -226,9 +232,9 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
 								Message:        pc.req,
 								Error:          err.Error(),
 							}
-							teActivityCtx := workflow.WithActivityOptions(ctx, lookupActivityOptions(teKey))
+							teActivityCtx := workflow.WithActivityOptions(ctx, wh.lookupActivityOptions(teKey))
 							var teOutput ActivityOutput
-							teErr := workflow.ExecuteActivity(teActivityCtx, RunHandler, teInput).Get(ctx, &teOutput)
+							teErr := workflow.ExecuteActivity(teActivityCtx, ha.RunHandler, teInput).Get(ctx, &teOutput)
 							if teErr != nil {
 								pc.responseCh.Send(ctx, teErr)
 								// Re-use current suspend to re-establish the same wait.
@@ -302,9 +308,9 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
 					State:          pc.state,
 					Message:        pc.req,
 				}
-				callActivityCtx := workflow.WithActivityOptions(ctx, lookupActivityOptions(pc.handlerKey))
+				callActivityCtx := workflow.WithActivityOptions(ctx, wh.lookupActivityOptions(pc.handlerKey))
 				var callOutput ActivityOutput
-				err := workflow.ExecuteActivity(callActivityCtx, RunHandler, callInput).Get(ctx, &callOutput)
+				err := workflow.ExecuteActivity(callActivityCtx, ha.RunHandler, callInput).Get(ctx, &callOutput)
 				if err != nil {
 					pc.responseCh.Send(ctx, err)
 					continue
@@ -317,7 +323,7 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
 				}
 			}
 
-			return nil, workflow.NewContinueAsNewError(ctx, StateroutineWorkflow, WorkflowInput{
+			return nil, workflow.NewContinueAsNewError(ctx, wh.StateroutineWorkflow, WorkflowInput{
 				HandlerKey:       handlerKey,
 				State:            state,
 				QueryResults:     allQueryResults,
@@ -328,25 +334,22 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
 }
 
 // lookupActivityOptions builds workflow.ActivityOptions from the handler's
-// RetryPolicy stored in the global registry.
-func lookupActivityOptions(handlerKey string) workflow.ActivityOptions {
+// options stored in the registry.
+func (wh *workflowHandler) lookupActivityOptions(handlerKey string) workflow.ActivityOptions {
 	opts := workflow.ActivityOptions{
 		StartToCloseTimeout: 30 * time.Second,
 	}
-	if globalRegistry == nil {
-		return opts
-	}
-	entry, ok := globalRegistry.entries[handlerKey]
+	entry, ok := wh.reg.entries[handlerKey]
 	if !ok {
 		return opts
 	}
+	if entry.options.StartToCloseTimeout > 0 {
+		opts.StartToCloseTimeout = entry.options.StartToCloseTimeout
+	}
+	if entry.options.ScheduleToCloseTimeout > 0 {
+		opts.ScheduleToCloseTimeout = entry.options.ScheduleToCloseTimeout
+	}
 	rp := entry.options.RetryPolicy
-	if rp.StartToCloseTimeout > 0 {
-		opts.StartToCloseTimeout = rp.StartToCloseTimeout
-	}
-	if rp.ScheduleToCloseTimeout > 0 {
-		opts.ScheduleToCloseTimeout = rp.ScheduleToCloseTimeout
-	}
 	if rp.MaxAttempts > 0 || rp.InitialInterval > 0 || rp.MaxInterval > 0 || rp.BackoffCoefficient > 0 {
 		trp := &temporal.RetryPolicy{}
 		if rp.MaxAttempts > 0 {
@@ -367,11 +370,8 @@ func lookupActivityOptions(handlerKey string) workflow.ActivityOptions {
 }
 
 // lookupTerminalErrorKey checks if a terminal error handler is registered.
-func lookupTerminalErrorKey(handlerKey string) string {
-	if globalRegistry == nil {
-		return ""
-	}
-	entry, ok := globalRegistry.entries[handlerKey]
+func (wh *workflowHandler) lookupTerminalErrorKey(handlerKey string) string {
+	entry, ok := wh.reg.entries[handlerKey]
 	if !ok {
 		return ""
 	}
@@ -379,7 +379,7 @@ func lookupTerminalErrorKey(handlerKey string) string {
 	if teKey == "" {
 		return ""
 	}
-	if _, ok := globalRegistry.entries[teKey]; ok {
+	if _, ok := wh.reg.entries[teKey]; ok {
 		return teKey
 	}
 	return ""

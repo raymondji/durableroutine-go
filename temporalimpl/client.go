@@ -45,7 +45,8 @@ func (c *Client) Start(ctx context.Context, id string, kind string, state any) e
 		State:            stateBytes,
 		MaxHistoryLength: c.MaxHistoryLength,
 	}
-	_, err = c.temporal.ExecuteWorkflow(ctx, opts, StateroutineWorkflow, input)
+	var wh *workflowHandler
+	_, err = c.temporal.ExecuteWorkflow(ctx, opts, wh.StateroutineWorkflow, input)
 	return err
 }
 
