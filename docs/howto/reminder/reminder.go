@@ -1,4 +1,4 @@
-// Package reminder demonstrates a simple durable stateroutine that sends a
+// Package reminder demonstrates a simple durable routine that sends a
 // sequence of emails with durable sleeps between them.
 // Uses struct-based handlers for dependency injection.
 // Each handler declares its own state type — state flows forward via After().
@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/raymondji/stateroutine/stateroutine"
+	"github.com/raymondji/durableroutine-go/durable"
 )
 
 // --- Per-step state types ---
@@ -39,32 +39,32 @@ type ReminderService struct {
 	FollowUpDelay time.Duration // if zero, defaults to 7 days
 }
 
-func (s *ReminderService) SendInitial(ctx *stateroutine.Context, state InitialState) (*stateroutine.Suspend[stateroutine.Unit], error) {
+func (s *ReminderService) SendInitial(ctx *durable.Context, state InitialState) (*durable.Continuation[durable.Unit], error) {
 	fmt.Printf("sending initial email to %s\n", state.Email)
 	delay := 24 * time.Hour
 	if s.InitialDelay > 0 {
 		delay = s.InitialDelay
 	}
-	return stateroutine.After(delay, s.SendFollowUp, FollowUpState{Email: state.Email}), nil
+	return durable.After(delay, s.SendFollowUp, FollowUpState{Email: state.Email}), nil
 }
 
-func (s *ReminderService) SendFollowUp(ctx *stateroutine.Context, state FollowUpState) (*stateroutine.Suspend[stateroutine.Unit], error) {
+func (s *ReminderService) SendFollowUp(ctx *durable.Context, state FollowUpState) (*durable.Continuation[durable.Unit], error) {
 	fmt.Printf("sending follow-up email to %s\n", state.Email)
 	delay := 7 * 24 * time.Hour
 	if s.FollowUpDelay > 0 {
 		delay = s.FollowUpDelay
 	}
-	return stateroutine.After(delay, s.SendFinal, FinalState{Email: state.Email}), nil
+	return durable.After(delay, s.SendFinal, FinalState{Email: state.Email}), nil
 }
 
-func (s *ReminderService) SendFinal(ctx *stateroutine.Context, state FinalState) (*stateroutine.Suspend[stateroutine.Unit], error) {
+func (s *ReminderService) SendFinal(ctx *durable.Context, state FinalState) (*durable.Continuation[durable.Unit], error) {
 	fmt.Printf("sending final email to %s\n", state.Email)
-	return stateroutine.Done(stateroutine.Unit{}), nil
+	return durable.Done(durable.Unit{}), nil
 }
 
 // RegisterHandlers registers all reminder handlers with the worker.
-func RegisterHandlers(w *stateroutine.Worker, svc *ReminderService) {
-	stateroutine.RegisterHandler(w, svc.SendInitial, stateroutine.HandlerOptions{})
-	stateroutine.RegisterHandler(w, svc.SendFollowUp, stateroutine.HandlerOptions{})
-	stateroutine.RegisterHandler(w, svc.SendFinal, stateroutine.HandlerOptions{})
+func RegisterHandlers(w *durable.Worker, svc *ReminderService) {
+	durable.RegisterHandler(w, svc.SendInitial, durable.HandlerOptions{})
+	durable.RegisterHandler(w, svc.SendFollowUp, durable.HandlerOptions{})
+	durable.RegisterHandler(w, svc.SendFinal, durable.HandlerOptions{})
 }

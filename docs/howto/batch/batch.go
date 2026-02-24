@@ -7,7 +7,7 @@ package batch
 import (
 	"fmt"
 
-	"github.com/raymondji/stateroutine/stateroutine"
+	"github.com/raymondji/durableroutine-go/durable"
 )
 
 const ChunkSize = 100
@@ -53,7 +53,7 @@ type BatchService struct {
 	// Injected dependencies would go here (e.g., DB client, API client).
 }
 
-func (s *BatchService) StartBatch(ctx *stateroutine.Context, state BatchState) (*stateroutine.Suspend[BatchResult], error) {
+func (s *BatchService) StartBatch(ctx *durable.Context, state BatchState) (*durable.Continuation[BatchResult], error) {
 	fmt.Printf("starting batch of %d items\n", len(state.Items))
 	processing := ProcessingState{Items: state.Items}
 
@@ -61,11 +61,11 @@ func (s *BatchService) StartBatch(ctx *stateroutine.Context, state BatchState) (
 	return s.processChunk(ctx, processing)
 }
 
-func (s *BatchService) ProcessChunk(ctx *stateroutine.Context, state ProcessingState) (*stateroutine.Suspend[BatchResult], error) {
+func (s *BatchService) ProcessChunk(ctx *durable.Context, state ProcessingState) (*durable.Continuation[BatchResult], error) {
 	return s.processChunk(ctx, state)
 }
 
-func (s *BatchService) processChunk(_ *stateroutine.Context, state ProcessingState) (*stateroutine.Suspend[BatchResult], error) {
+func (s *BatchService) processChunk(_ *durable.Context, state ProcessingState) (*durable.Continuation[BatchResult], error) {
 	end := state.Offset + ChunkSize
 	if end > len(state.Items) {
 		end = len(state.Items)
@@ -89,19 +89,19 @@ func (s *BatchService) processChunk(_ *stateroutine.Context, state ProcessingSta
 		// All items processed.
 		fmt.Printf("batch complete: %d processed, %d errors\n",
 			state.Processed, state.Errors)
-		return stateroutine.Done(BatchResult{Processed: state.Processed, Errors: state.Errors}), nil
+		return durable.Done(BatchResult{Processed: state.Processed, Errors: state.Errors}), nil
 	}
 
-	return stateroutine.Select[BatchResult](
-		stateroutine.OnSend(s.CancelBatch, state),
-		stateroutine.Default(s.ProcessChunk, state),
+	return durable.Select(
+		durable.ReceiveSend(s.CancelBatch, state),
+		durable.Default(s.ProcessChunk, state),
 	), nil
 }
 
-func (s *BatchService) CancelBatch(ctx *stateroutine.Context, state ProcessingState, msg CancelMsg) (*stateroutine.Suspend[BatchResult], error) {
+func (s *BatchService) CancelBatch(ctx *durable.Context, state ProcessingState, msg CancelMsg) (*durable.Continuation[BatchResult], error) {
 	fmt.Printf("batch cancelled (reason: %s) after %d/%d items (%d errors)\n",
 		msg.Reason, state.Offset, len(state.Items), state.Errors)
-	return stateroutine.Done(BatchResult{Processed: state.Processed, Errors: state.Errors, Cancelled: true}), nil
+	return durable.Done(BatchResult{Processed: state.Processed, Errors: state.Errors, Cancelled: true}), nil
 }
 
 // ProcessItem simulates processing a single item.
@@ -111,8 +111,8 @@ func ProcessItem(item string) error {
 }
 
 // RegisterHandlers registers all batch handlers with the worker.
-func RegisterHandlers(w *stateroutine.Worker, svc *BatchService) {
-	stateroutine.RegisterHandler(w, svc.StartBatch, stateroutine.HandlerOptions{})
-	stateroutine.RegisterHandler(w, svc.ProcessChunk, stateroutine.HandlerOptions{})
-	stateroutine.RegisterSendHandler(w, svc.CancelBatch, stateroutine.HandlerOptions{})
+func RegisterHandlers(w *durable.Worker, svc *BatchService) {
+	durable.RegisterHandler(w, svc.StartBatch, durable.HandlerOptions{})
+	durable.RegisterHandler(w, svc.ProcessChunk, durable.HandlerOptions{})
+	durable.RegisterSendHandler(w, svc.CancelBatch, durable.HandlerOptions{})
 }

@@ -5,33 +5,33 @@ import (
 	"testing"
 	"time"
 
-	"github.com/raymondji/stateroutine/docs/howto/auction"
-	"github.com/raymondji/stateroutine/stateroutine"
-	"github.com/raymondji/stateroutine/testenv"
+	"github.com/raymondji/durableroutine-go/docs/howto/auction"
+	"github.com/raymondji/durableroutine-go/durable"
+	"github.com/raymondji/durableroutine-go/testenv"
 )
 
 func TestAuctionBidAcceptReject(t *testing.T) {
 	svc := &auction.AuctionService{}
-	testenv.RunAll(t, func(w *stateroutine.Worker) {
+	testenv.RunAll(t, func(w *durable.Worker) {
 		auction.RegisterHandlers(w, svc)
 	}, func(t *testing.T, env *testenv.Env) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
 		id := env.UniqueID("auction-bids")
-		h, err := stateroutine.Start(env.Client, ctx, id, svc.OpenAuction, auction.AuctionState{
+		h, err := durable.Go(env.Client, ctx, id, svc.OpenAuction, auction.AuctionState{
 			ItemName:    "Vintage Watch",
 			StartingBid: 100.0,
 			Duration:    30 * time.Second,
 		})
 		if err != nil {
-			t.Fatalf("Start failed: %v", err)
+			t.Fatalf("Go failed: %v", err)
 		}
 
 		time.Sleep(2 * time.Second)
 
 		// Bid $150 — should be accepted
-		resp, err := stateroutine.ClientCall(env.Client, ctx, id, svc.PlaceBid, auction.PlaceBidReq{
+		resp, err := durable.Call(env.Client, ctx, id, svc.PlaceBid, auction.PlaceBidReq{
 			BidderID: "alice", Amount: 150.0,
 		})
 		if err != nil {
@@ -44,7 +44,7 @@ func TestAuctionBidAcceptReject(t *testing.T) {
 		time.Sleep(1 * time.Second)
 
 		// Bid $120 — should be rejected (lower than current $150)
-		resp, err = stateroutine.ClientCall(env.Client, ctx, id, svc.PlaceBid, auction.PlaceBidReq{
+		resp, err = durable.Call(env.Client, ctx, id, svc.PlaceBid, auction.PlaceBidReq{
 			BidderID: "bob", Amount: 120.0,
 		})
 		if err != nil {
@@ -57,7 +57,7 @@ func TestAuctionBidAcceptReject(t *testing.T) {
 		time.Sleep(1 * time.Second)
 
 		// Bid $200 — should be accepted
-		resp, err = stateroutine.ClientCall(env.Client, ctx, id, svc.PlaceBid, auction.PlaceBidReq{
+		resp, err = durable.Call(env.Client, ctx, id, svc.PlaceBid, auction.PlaceBidReq{
 			BidderID: "bob", Amount: 200.0,
 		})
 		if err != nil {
@@ -88,19 +88,19 @@ func TestAuctionBidAcceptReject(t *testing.T) {
 
 func TestAuctionNoBids(t *testing.T) {
 	svc := &auction.AuctionService{}
-	testenv.RunAll(t, func(w *stateroutine.Worker) {
+	testenv.RunAll(t, func(w *durable.Worker) {
 		auction.RegisterHandlers(w, svc)
 	}, func(t *testing.T, env *testenv.Env) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		h, err := stateroutine.Start(env.Client, ctx, env.UniqueID("auction-nobids"), svc.OpenAuction, auction.AuctionState{
+		h, err := durable.Go(env.Client, ctx, env.UniqueID("auction-nobids"), svc.OpenAuction, auction.AuctionState{
 			ItemName:    "Empty Auction",
 			StartingBid: 50.0,
 			Duration:    1 * time.Millisecond,
 		})
 		if err != nil {
-			t.Fatalf("Start failed: %v", err)
+			t.Fatalf("Go failed: %v", err)
 		}
 
 		result, err := h.Get(ctx)

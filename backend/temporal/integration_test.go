@@ -1,4 +1,4 @@
-package temporalimpl_test
+package temporal_test
 
 import (
 	"context"
@@ -8,8 +8,8 @@ import (
 
 	temporalclient "go.temporal.io/sdk/client"
 
-	"github.com/raymondji/stateroutine/stateroutine"
-	"github.com/raymondji/stateroutine/temporalimpl"
+	"github.com/raymondji/durableroutine-go/backend/temporal"
+	"github.com/raymondji/durableroutine-go/durable"
 )
 
 func newTemporalClient(t *testing.T) temporalclient.Client {
@@ -53,20 +53,20 @@ type reminderService struct {
 	sent []string
 }
 
-func (s *reminderService) SendInitial(ctx *stateroutine.Context, state InitialState) (*stateroutine.Suspend[stateroutine.Unit], error) {
+func (s *reminderService) SendInitial(ctx *durable.Context, state InitialState) (*durable.Continuation[durable.Unit], error) {
 	s.sent = append(s.sent, "initial:"+state.Email)
 	// Use very short timers for testing.
-	return stateroutine.After(1*time.Millisecond, s.SendFollowUp, FollowUpState{Email: state.Email}), nil
+	return durable.After(1*time.Millisecond, s.SendFollowUp, FollowUpState{Email: state.Email}), nil
 }
 
-func (s *reminderService) SendFollowUp(ctx *stateroutine.Context, state FollowUpState) (*stateroutine.Suspend[stateroutine.Unit], error) {
+func (s *reminderService) SendFollowUp(ctx *durable.Context, state FollowUpState) (*durable.Continuation[durable.Unit], error) {
 	s.sent = append(s.sent, "followup:"+state.Email)
-	return stateroutine.After(1*time.Millisecond, s.SendFinal, FinalState{Email: state.Email}), nil
+	return durable.After(1*time.Millisecond, s.SendFinal, FinalState{Email: state.Email}), nil
 }
 
-func (s *reminderService) SendFinal(ctx *stateroutine.Context, state FinalState) (*stateroutine.Suspend[stateroutine.Unit], error) {
+func (s *reminderService) SendFinal(ctx *durable.Context, state FinalState) (*durable.Continuation[durable.Unit], error) {
 	s.sent = append(s.sent, "final:"+state.Email)
-	return stateroutine.Done(stateroutine.Unit{}), nil
+	return durable.Done(durable.Unit{}), nil
 }
 
 func TestReminderEndToEnd(t *testing.T) {
@@ -75,12 +75,12 @@ func TestReminderEndToEnd(t *testing.T) {
 
 	svc := &reminderService{}
 
-	w := stateroutine.NewWorker(taskQueue)
-	stateroutine.RegisterHandler(w, svc.SendInitial, stateroutine.HandlerOptions{})
-	stateroutine.RegisterHandler(w, svc.SendFollowUp, stateroutine.HandlerOptions{})
-	stateroutine.RegisterHandler(w, svc.SendFinal, stateroutine.HandlerOptions{})
+	w := durable.NewWorker(taskQueue)
+	durable.RegisterHandler(w, svc.SendInitial, durable.HandlerOptions{})
+	durable.RegisterHandler(w, svc.SendFollowUp, durable.HandlerOptions{})
+	durable.RegisterHandler(w, svc.SendFinal, durable.HandlerOptions{})
 
-	tw := temporalimpl.NewWorker(tc, w)
+	tw := temporal.NewWorker(tc, w)
 	go func() {
 		if err := tw.Start(); err != nil {
 			t.Logf("worker start error: %v", err)
@@ -91,15 +91,15 @@ func TestReminderEndToEnd(t *testing.T) {
 	// Give worker time to start polling.
 	time.Sleep(500 * time.Millisecond)
 
-	client := temporalimpl.NewClient(tc, taskQueue)
-	srClient := stateroutine.NewClientFrom(client)
+	client := temporal.NewClient(tc, taskQueue)
+	srClient := durable.NewClientFrom(client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h, err := stateroutine.Start(srClient, ctx, uniqueID("reminder"), svc.SendInitial, InitialState{Email: "test@example.com"})
+	h, err := durable.Go(srClient, ctx, uniqueID("reminder"), svc.SendInitial, InitialState{Email: "test@example.com"})
 	if err != nil {
-		t.Fatalf("Start failed: %v", err)
+		t.Fatalf("Go failed: %v", err)
 	}
 
 	result, err := h.Get(ctx)
@@ -107,7 +107,7 @@ func TestReminderEndToEnd(t *testing.T) {
 		t.Fatalf("Get failed: %v", err)
 	}
 
-	_ = result // stateroutine.Unit{}
+	_ = result // durable.Unit{}
 	t.Logf("Reminder completed successfully")
 }
 
@@ -119,18 +119,18 @@ func (SimpleState) Kind() string { return "simple" }
 
 type SimpleResult struct{ Output string }
 
-func simpleHandler(ctx *stateroutine.Context, state SimpleState) (*stateroutine.Suspend[SimpleResult], error) {
-	return stateroutine.Done(SimpleResult{Output: "got:" + state.Value}), nil
+func simpleHandler(ctx *durable.Context, state SimpleState) (*durable.Continuation[SimpleResult], error) {
+	return durable.Done(SimpleResult{Output: "got:" + state.Value}), nil
 }
 
 func TestSimpleDone(t *testing.T) {
 	tc := newTemporalClient(t)
 	taskQueue := uniqueTaskQueue(t)
 
-	w := stateroutine.NewWorker(taskQueue)
-	stateroutine.RegisterHandler(w, simpleHandler, stateroutine.HandlerOptions{})
+	w := durable.NewWorker(taskQueue)
+	durable.RegisterHandler(w, simpleHandler, durable.HandlerOptions{})
 
-	tw := temporalimpl.NewWorker(tc, w)
+	tw := temporal.NewWorker(tc, w)
 	go func() {
 		if err := tw.Start(); err != nil {
 			t.Logf("worker start error: %v", err)
@@ -140,15 +140,15 @@ func TestSimpleDone(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	client := temporalimpl.NewClient(tc, taskQueue)
-	srClient := stateroutine.NewClientFrom(client)
+	client := temporal.NewClient(tc, taskQueue)
+	srClient := durable.NewClientFrom(client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h, err := stateroutine.Start(srClient, ctx, uniqueID("simple"), simpleHandler, SimpleState{Value: "hello"})
+	h, err := durable.Go(srClient, ctx, uniqueID("simple"), simpleHandler, SimpleState{Value: "hello"})
 	if err != nil {
-		t.Fatalf("Start failed: %v", err)
+		t.Fatalf("Go failed: %v", err)
 	}
 
 	result, err := h.Get(ctx)
@@ -174,22 +174,22 @@ func (StatusResp) Kind() string { return "status" }
 
 type QueryResult struct{ FinalCount int }
 
-func queryHandler(ctx *stateroutine.Context, state QueryState) (*stateroutine.Suspend[QueryResult], error) {
-	stateroutine.SetQueryResult(ctx, StatusResp{Count: state.Counter})
+func queryHandler(ctx *durable.Context, state QueryState) (*durable.Continuation[QueryResult], error) {
+	durable.SetQueryResult(ctx, StatusResp{Count: state.Counter})
 	if state.Counter >= 3 {
-		return stateroutine.Done(QueryResult{FinalCount: state.Counter}), nil
+		return durable.Done(QueryResult{FinalCount: state.Counter}), nil
 	}
-	return stateroutine.After(1*time.Millisecond, queryHandler, QueryState{Counter: state.Counter + 1}), nil
+	return durable.After(1*time.Millisecond, queryHandler, QueryState{Counter: state.Counter + 1}), nil
 }
 
 func TestQueryResult(t *testing.T) {
 	tc := newTemporalClient(t)
 	taskQueue := uniqueTaskQueue(t)
 
-	w := stateroutine.NewWorker(taskQueue)
-	stateroutine.RegisterHandler(w, queryHandler, stateroutine.HandlerOptions{})
+	w := durable.NewWorker(taskQueue)
+	durable.RegisterHandler(w, queryHandler, durable.HandlerOptions{})
 
-	tw := temporalimpl.NewWorker(tc, w)
+	tw := temporal.NewWorker(tc, w)
 	go func() {
 		if err := tw.Start(); err != nil {
 			t.Logf("worker start error: %v", err)
@@ -199,15 +199,15 @@ func TestQueryResult(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	client := temporalimpl.NewClient(tc, taskQueue)
-	srClient := stateroutine.NewClientFrom(client)
+	client := temporal.NewClient(tc, taskQueue)
+	srClient := durable.NewClientFrom(client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h, err := stateroutine.Start(srClient, ctx, uniqueID("query"), queryHandler, QueryState{Counter: 0})
+	h, err := durable.Go(srClient, ctx, uniqueID("query"), queryHandler, QueryState{Counter: 0})
 	if err != nil {
-		t.Fatalf("Start failed: %v", err)
+		t.Fatalf("Go failed: %v", err)
 	}
 
 	result, err := h.Get(ctx)
@@ -241,14 +241,12 @@ type SendResult struct{ ReceivedText string }
 
 type sendService struct{}
 
-func (s *sendService) WaitForMsg(ctx *stateroutine.Context, state WaitingState) (*stateroutine.Suspend[SendResult], error) {
-	return stateroutine.Select[SendResult](
-		stateroutine.OnSend(s.HandleMsg, state),
-	), nil
+func (s *sendService) WaitForMsg(ctx *durable.Context, state WaitingState) (*durable.Continuation[SendResult], error) {
+	return durable.ReceiveSend(s.HandleMsg, state), nil
 }
 
-func (s *sendService) HandleMsg(ctx *stateroutine.Context, state WaitingState, msg MyMsg) (*stateroutine.Suspend[SendResult], error) {
-	return stateroutine.Done(SendResult{ReceivedText: msg.Text}), nil
+func (s *sendService) HandleMsg(ctx *durable.Context, state WaitingState, msg MyMsg) (*durable.Continuation[SendResult], error) {
+	return durable.Done(SendResult{ReceivedText: msg.Text}), nil
 }
 
 func TestSendSignal(t *testing.T) {
@@ -257,11 +255,11 @@ func TestSendSignal(t *testing.T) {
 
 	svc := &sendService{}
 
-	w := stateroutine.NewWorker(taskQueue)
-	stateroutine.RegisterHandler(w, svc.WaitForMsg, stateroutine.HandlerOptions{})
-	stateroutine.RegisterSendHandler(w, svc.HandleMsg, stateroutine.HandlerOptions{})
+	w := durable.NewWorker(taskQueue)
+	durable.RegisterHandler(w, svc.WaitForMsg, durable.HandlerOptions{})
+	durable.RegisterSendHandler(w, svc.HandleMsg, durable.HandlerOptions{})
 
-	tw := temporalimpl.NewWorker(tc, w)
+	tw := temporal.NewWorker(tc, w)
 	go func() {
 		if err := tw.Start(); err != nil {
 			t.Logf("worker start error: %v", err)
@@ -271,22 +269,22 @@ func TestSendSignal(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	client := temporalimpl.NewClient(tc, taskQueue)
-	srClient := stateroutine.NewClientFrom(client)
+	client := temporal.NewClient(tc, taskQueue)
+	srClient := durable.NewClientFrom(client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	wfID := uniqueID("send")
-	h, err := stateroutine.Start(srClient, ctx, wfID, svc.WaitForMsg, WaitingState{Name: "test"})
+	h, err := durable.Go(srClient, ctx, wfID, svc.WaitForMsg, WaitingState{Name: "test"})
 	if err != nil {
-		t.Fatalf("Start failed: %v", err)
+		t.Fatalf("Go failed: %v", err)
 	}
 
 	// Give the workflow time to start and reach the Select.
 	time.Sleep(2 * time.Second)
 
-	err = stateroutine.ClientSend(srClient, ctx, wfID, svc.HandleMsg, MyMsg{Text: "hello signal"})
+	err = durable.Send(srClient, ctx, wfID, svc.HandleMsg, MyMsg{Text: "hello signal"})
 	if err != nil {
 		t.Fatalf("ClientSend failed: %v", err)
 	}
@@ -336,30 +334,28 @@ type CANResult struct {
 
 type canService struct{}
 
-func (s *canService) Count(ctx *stateroutine.Context, state CANCountState) (*stateroutine.Suspend[CANResult], error) {
-	stateroutine.SetQueryResult(ctx, CANStatusResp{Count: state.Counter})
+func (s *canService) Count(ctx *durable.Context, state CANCountState) (*durable.Continuation[CANResult], error) {
+	durable.SetQueryResult(ctx, CANStatusResp{Count: state.Counter})
 	if state.Counter >= 15 {
-		return stateroutine.Continue(s.Wait, CANWaitState{Counter: state.Counter}), nil
+		return durable.Continue(s.Wait, CANWaitState{Counter: state.Counter}), nil
 	}
-	return stateroutine.Continue(s.Count, CANCountState{Counter: state.Counter + 1}), nil
+	return durable.Continue(s.Count, CANCountState{Counter: state.Counter + 1}), nil
 }
 
-func (s *canService) Wait(ctx *stateroutine.Context, state CANWaitState) (*stateroutine.Suspend[CANResult], error) {
-	return stateroutine.Select[CANResult](
-		stateroutine.OnSend(s.RecvMsg, state),
-		stateroutine.OnCall(s.HandleCall, state),
+func (s *canService) Wait(ctx *durable.Context, state CANWaitState) (*durable.Continuation[CANResult], error) {
+	return durable.Select(
+		durable.ReceiveSend(s.RecvMsg, state),
+		durable.ReceiveCall(s.HandleCall, state),
 	), nil
 }
 
-func (s *canService) RecvMsg(ctx *stateroutine.Context, state CANWaitState, msg CANMsg) (*stateroutine.Suspend[CANResult], error) {
+func (s *canService) RecvMsg(ctx *durable.Context, state CANWaitState, msg CANMsg) (*durable.Continuation[CANResult], error) {
 	state.MsgText = msg.Text
-	return stateroutine.Select[CANResult](
-		stateroutine.OnCall(s.HandleCall, state),
-	), nil
+	return durable.ReceiveCall(s.HandleCall, state), nil
 }
 
-func (s *canService) HandleCall(ctx *stateroutine.Context, state CANWaitState, req CANCallReq) (CANCallResp, *stateroutine.Suspend[CANResult], error) {
-	return CANCallResp{Echo: req.Text}, stateroutine.Done(CANResult{
+func (s *canService) HandleCall(ctx *durable.Context, state CANWaitState, req CANCallReq) (CANCallResp, *durable.Continuation[CANResult], error) {
+	return CANCallResp{Echo: req.Text}, durable.Done(CANResult{
 		FinalCount: state.Counter,
 		MsgText:    state.MsgText,
 		CallEcho:   req.Text,
@@ -372,13 +368,13 @@ func TestContinueAsNew(t *testing.T) {
 
 	svc := &canService{}
 
-	w := stateroutine.NewWorker(taskQueue)
-	stateroutine.RegisterHandler(w, svc.Count, stateroutine.HandlerOptions{})
-	stateroutine.RegisterHandler(w, svc.Wait, stateroutine.HandlerOptions{})
-	stateroutine.RegisterSendHandler(w, svc.RecvMsg, stateroutine.HandlerOptions{})
-	stateroutine.RegisterCallHandler(w, svc.HandleCall, stateroutine.HandlerOptions{})
+	w := durable.NewWorker(taskQueue)
+	durable.RegisterHandler(w, svc.Count, durable.HandlerOptions{})
+	durable.RegisterHandler(w, svc.Wait, durable.HandlerOptions{})
+	durable.RegisterSendHandler(w, svc.RecvMsg, durable.HandlerOptions{})
+	durable.RegisterCallHandler(w, svc.HandleCall, durable.HandlerOptions{})
 
-	tw := temporalimpl.NewWorker(tc, w)
+	tw := temporal.NewWorker(tc, w)
 	go func() {
 		if err := tw.Start(); err != nil {
 			t.Logf("worker start error: %v", err)
@@ -388,17 +384,17 @@ func TestContinueAsNew(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	client := temporalimpl.NewClient(tc, taskQueue)
+	client := temporal.NewClient(tc, taskQueue)
 	client.MaxHistoryLength = 30
-	srClient := stateroutine.NewClientFrom(client)
+	srClient := durable.NewClientFrom(client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	wfID := uniqueID("can")
-	h, err := stateroutine.Start(srClient, ctx, wfID, svc.Count, CANCountState{Counter: 0})
+	h, err := durable.Go(srClient, ctx, wfID, svc.Count, CANCountState{Counter: 0})
 	if err != nil {
-		t.Fatalf("Start failed: %v", err)
+		t.Fatalf("Go failed: %v", err)
 	}
 
 	// Wait for counting to complete and CAN to happen.
@@ -406,7 +402,7 @@ func TestContinueAsNew(t *testing.T) {
 	time.Sleep(10 * time.Second)
 
 	// Verify query survived CAN.
-	status, err := stateroutine.ClientQuery(srClient, ctx, wfID, CANStatusResp{})
+	status, err := durable.Query(srClient, ctx, wfID, CANStatusResp{})
 	if err != nil {
 		t.Fatalf("ClientQuery failed: %v", err)
 	}
@@ -415,7 +411,7 @@ func TestContinueAsNew(t *testing.T) {
 	}
 
 	// Send a message after CAN.
-	err = stateroutine.ClientSend(srClient, ctx, wfID, svc.RecvMsg, CANMsg{Text: "hello-after-can"})
+	err = durable.Send(srClient, ctx, wfID, svc.RecvMsg, CANMsg{Text: "hello-after-can"})
 	if err != nil {
 		t.Fatalf("ClientSend failed: %v", err)
 	}
@@ -423,7 +419,7 @@ func TestContinueAsNew(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	// Call after CAN.
-	callResp, err := stateroutine.ClientCall(srClient, ctx, wfID, svc.HandleCall, CANCallReq{Text: "echo-test"})
+	callResp, err := durable.Call(srClient, ctx, wfID, svc.HandleCall, CANCallReq{Text: "echo-test"})
 	if err != nil {
 		t.Fatalf("ClientCall failed: %v", err)
 	}

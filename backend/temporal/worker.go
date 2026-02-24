@@ -1,19 +1,19 @@
-package temporalimpl
+package temporal
 
 import (
 	temporalclient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
-	"github.com/raymondji/stateroutine/stateroutine"
+	"github.com/raymondji/durableroutine-go/durable"
 )
 
-// Worker wraps a Temporal worker with the stateroutine handler registry.
+// Worker wraps a Temporal worker with the routine handler registry.
 type Worker struct {
 	inner worker.Worker
 }
 
-// NewWorker creates a Temporal worker from a stateroutine.Worker definition.
-func NewWorker(tc temporalclient.Client, w *stateroutine.Worker) *Worker {
+// NewWorker creates a Temporal worker from a durable.Worker definition.
+func NewWorker(tc temporalclient.Client, w *durable.Worker) *Worker {
 	taskQueue := w.TaskQueue()
 	tw := worker.New(tc, taskQueue, worker.Options{})
 
@@ -29,7 +29,7 @@ func NewWorker(tc temporalclient.Client, w *stateroutine.Worker) *Worker {
 	// Register the workflow and activity using struct-based dependency injection.
 	ha := &handlerActivity{reg: reg}
 	wh := &workflowHandler{reg: reg}
-	tw.RegisterWorkflow(wh.StateroutineWorkflow)
+	tw.RegisterWorkflow(wh.RoutineWorkflow)
 	tw.RegisterActivity(ha)
 
 	return &Worker{inner: tw}

@@ -1,12 +1,12 @@
 # Design Doc: Temporal Implementation
 
-This document describes how the stateroutine API maps to Temporal primitives. The implementation lives in a separate `temporalimpl/` package, keeping the core `stateroutine/` package free of Temporal dependencies.
+This document describes how the stateroutine API maps to Temporal primitives. The implementation lives in a separate `backend/temporal/` package, keeping the core `stateroutine/` package free of Temporal dependencies.
 
 ## Package Structure
 
 ```
-temporalimpl/
-    client.go       — implements stateroutine.Client
+backend/temporal/
+    client.go       — implements durable.Client
     worker.go       — wraps Temporal worker, registers workflows + activities
     workflow.go     — StateroutineWorkflow: the library-owned workflow loop
     activities.go   — activity wrappers for user handlers
@@ -14,9 +14,9 @@ temporalimpl/
 
 ## Client
 
-The `temporalimpl.Client` implements `stateroutine.Client` by mapping each method to a Temporal SDK call:
+The `temporal.Client` implements `durable.Client` by mapping each method to a Temporal SDK call:
 
-| stateroutine.Client method | Temporal SDK call |
+| durable.Client method | Temporal SDK call |
 |---|---|
 | `start(ctx, id, kind, state)` | `client.ExecuteWorkflow(ctx, options, StateroutineWorkflow, input)` |
 | `send(ctx, id, stateKind, msgKind, msg)` | `client.SignalWorkflow(ctx, id, "", signalName, msg)` where `signalName = "send:" + stateKind + ":" + msgKind` |
@@ -53,7 +53,7 @@ On continue-as-new, all fields are carried forward so the new execution resumes 
 
 **Self-managed signal buffer**: Instead of relying on Temporal's signal channel naming, we buffer incoming signals in a local `map[string][]any` keyed by composite signal name (`"send:" + stateKind + ":" + msgKind`). This eliminates naming mismatches and makes continue-as-new behavior explicit.
 
-**Queue+Await for OnCall**: Temporal Updates don't participate in Selectors. Update handlers fire independently — registering `SetUpdateHandler` inside a Selector case creates a race with timers/signals. Instead, Update handlers enqueue requests into a local queue and block via `workflow.Await`. The main Selector receives a notification and processes the call in the main loop.
+**Queue+Await for ReceiveCall**: Temporal Updates don't participate in Selectors. Update handlers fire independently — registering `SetUpdateHandler` inside a Selector case creates a race with timers/signals. Instead, Update handlers enqueue requests into a local queue and block via `workflow.Await`. The main Selector receives a notification and processes the call in the main loop.
 
 ### Pseudocode
 
@@ -168,20 +168,20 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
             return output.Result, nil
         }
 
-        // 6. Interpret Suspend cases
-        suspend := output.Suspend
+        // 6. Interpret Continuation cases
+        cont := output.Continuation
 
         // If the only case is immediate (Continue), skip the selector
-        if len(suspend.Cases) == 1 && suspend.Cases[0].Immediate {
-            handlerKey = suspend.Cases[0].HandlerKey
-            state = suspend.Cases[0].State
+        if len(cont.Cases) == 1 && cont.Cases[0].Immediate {
+            handlerKey = cont.Cases[0].HandlerKey
+            state = cont.Cases[0].State
             goto continueAsNewCheck
         }
 
-        // Register Update handlers for OnCall cases.
+        // Register Update handlers for ReceiveCall cases.
         // Each handler enqueues the request and blocks until the main loop
         // processes it and writes a response.
-        for _, c := range suspend.Cases {
+        for _, c := range cont.Cases {
             if c.CallName == "" {
                 continue
             }
@@ -206,7 +206,7 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
                     }
                     return resp, nil
                 },
-                // Validator: reject calls not in the current suspension's OnCall cases
+                // Validator: reject calls not in the current suspension's ReceiveCall cases
                 workflow.UpdateHandlerOptions{
                     Validator: func(ctx workflow.Context, req any) error {
                         // Only accept if this update name is in the current cases
@@ -224,7 +224,7 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
         sel := workflow.NewSelector(ctx)
 
         // Priority 1: Timers
-        for _, c := range suspend.Cases {
+        for _, c := range cont.Cases {
             if c.TimerDuration == nil {
                 continue
             }
@@ -261,13 +261,13 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
             // Send response back to the Update handler
             pc.responseCh.Send(ctx, callOutput.CallResponse)
 
-            // Transition to the call handler's returned Suspend
-            handlerKey = callOutput.Suspend.Cases[0].HandlerKey
-            state = callOutput.Suspend.Cases[0].State
+            // Transition to the call handler's returned Continuation
+            handlerKey = callOutput.Continuation.Cases[0].HandlerKey
+            state = callOutput.Continuation.Cases[0].State
         })
 
         // Priority 3: Sends (check self-managed signal buffer)
-        for _, c := range suspend.Cases {
+        for _, c := range cont.Cases {
             if c.SendName == "" {
                 continue
             }
@@ -305,7 +305,7 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
         }
 
         // Priority 4: Default (immediate/Continue case)
-        for _, c := range suspend.Cases {
+        for _, c := range cont.Cases {
             if !c.Immediate {
                 continue
             }
@@ -341,8 +341,8 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
                 }
                 pc.responseCh.Send(ctx, callOutput.CallResponse)
 
-                handlerKey = callOutput.Suspend.Cases[0].HandlerKey
-                state = callOutput.Suspend.Cases[0].State
+                handlerKey = callOutput.Continuation.Cases[0].HandlerKey
+                state = callOutput.Continuation.Cases[0].State
             }
 
             return nil, workflow.NewContinueAsNewError(ctx, StateroutineWorkflow, WorkflowInput{
@@ -372,7 +372,7 @@ type ActivityInput struct {
 type ActivityOutput struct {
     Done          bool
     Result        any
-    Suspend       SerializedSuspend  // always set for successful CallFunc handlers
+    Continuation  SerializedContinuation  // always set for successful CallFunc handlers
     QueryResults  []QueryEntry
     StartRequests []StartEntry
     SendRequests  []SendEntry
@@ -383,26 +383,26 @@ type ActivityOutput struct {
 The `RunHandler` activity:
 1. Looks up the handler function by key from the worker's handler registry
 2. Uses the registry's type information to deserialize `State` and `Message` into their concrete Go types (the registry stores `reflect.Type` for each handler's state and message types)
-3. Constructs a `stateroutine.Context` with the stateroutine ID
+3. Constructs a `durable.Context` with the stateroutine ID
 4. Calls the handler with the deserialized state (and message, if applicable)
-5. **Validates**: For `CallFunc` handlers, if the handler returned `err == nil` but `Suspend == nil`, the activity returns an error — handlers must always return a `Suspend` when there is no error. Returning `(resp, nil, err)` with a non-nil error is valid because the error triggers retry/terminal-error-handler logic.
-6. Captures the `Suspend`, query results, start requests, and send requests from the context
+5. **Validates**: For `CallFunc` handlers, if the handler returned `err == nil` but `Continuation == nil`, the activity returns an error — handlers must always return a `Continuation` when there is no error. Returning `(resp, nil, err)` with a non-nil error is valid because the error triggers retry/terminal-error-handler logic.
+6. Captures the `Continuation`, query results, start requests, and send requests from the context
 7. Returns `ActivityOutput`
 
 Activity options (retry policy, timeouts) are configured from the `HandlerOptions` registered with each handler.
 
 ## Worker
 
-The `temporalimpl.Worker` wraps a Temporal worker:
+The `temporal.Worker` wraps a Temporal worker:
 
 ```go
 type Worker struct {
     inner      worker.Worker
     taskQueue  string
-    handlers   map[string]handlerEntry // from stateroutine.Worker
+    handlers   map[string]handlerEntry // from durable.Worker
 }
 
-func New(c client.Client, w *stateroutine.Worker) *Worker {
+func New(c client.Client, w *durable.Worker) *Worker {
     // Create Temporal worker
     tw := worker.New(c, w.TaskQueue(), worker.Options{})
 
@@ -423,7 +423,7 @@ func New(c client.Client, w *stateroutine.Worker) *Worker {
 
 ### Exposed Getters Needed
 
-The `stateroutine.Worker` must expose:
+The `durable.Worker` must expose:
 - `TaskQueue() string` — returns the task queue name
 - `Handlers() map[string]handlerEntry` — returns the handler registry
 
@@ -483,4 +483,4 @@ For `ClientSend`, signals arrive via `client.SignalWorkflow`. For `Send` (stater
 - **Handler errors**: Activities are retried according to the `RetryPolicy` in `HandlerOptions`. After all retries are exhausted, the workflow checks for a terminal error handler registered under `"error:" + handlerKey`.
 - **Terminal error handlers**: Run as a separate activity. If the terminal error handler also fails, the workflow fails.
 - **Workflow errors**: If no terminal error handler is registered and retries are exhausted, the workflow fails with the activity error.
-- **Call handler errors**: If a call handler activity fails, the error is sent back to the Update handler's response channel. The Update handler returns the error to the client. The workflow does not transition state — it re-enters the select loop with the same cases. If retries are exhausted and a terminal error handler is registered, it runs and must return a valid `Suspend` (along with the error response to the caller).
+- **Call handler errors**: If a call handler activity fails, the error is sent back to the Update handler's response channel. The Update handler returns the error to the client. The workflow does not transition state — it re-enters the select loop with the same cases. If retries are exhausted and a terminal error handler is registered, it runs and must return a valid `Continuation` (along with the error response to the caller).

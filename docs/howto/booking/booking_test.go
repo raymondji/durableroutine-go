@@ -6,30 +6,30 @@ import (
 	"testing"
 	"time"
 
-	"github.com/raymondji/stateroutine/docs/howto/booking"
-	"github.com/raymondji/stateroutine/stateroutine"
-	"github.com/raymondji/stateroutine/testenv"
+	"github.com/raymondji/durableroutine-go/docs/howto/booking"
+	"github.com/raymondji/durableroutine-go/durable"
+	"github.com/raymondji/durableroutine-go/testenv"
 )
 
 func TestBookingHappyPath(t *testing.T) {
 	svc := &booking.BookingService{}
-	testenv.RunAll(t, func(w *stateroutine.Worker) {
+	testenv.RunAll(t, func(w *durable.Worker) {
 		booking.RegisterHandlers(w, svc)
 	}, func(t *testing.T, env *testenv.Env) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		id := env.UniqueID("booking-happy")
-		h, err := stateroutine.Start(env.Client, ctx, id, svc.ReserveItem, booking.BookingState{
+		h, err := durable.Go(env.Client, ctx, id, svc.ReserveItem, booking.BookingState{
 			UserID: "user-1", ItemID: "item-1",
 		})
 		if err != nil {
-			t.Fatalf("Start failed: %v", err)
+			t.Fatalf("Go failed: %v", err)
 		}
 
 		time.Sleep(2 * time.Second)
 
-		err = stateroutine.ClientSend(env.Client, ctx, id, svc.ProcessPayment, booking.PaymentInfo{
+		err = durable.Send(env.Client, ctx, id, svc.ProcessPayment, booking.PaymentInfo{
 			CardNumber: "4111111111111111", Expiry: "12/26",
 		})
 		if err != nil {
@@ -38,7 +38,7 @@ func TestBookingHappyPath(t *testing.T) {
 
 		time.Sleep(2 * time.Second)
 
-		err = stateroutine.ClientSend(env.Client, ctx, id, svc.ProcessShipping, booking.ShippingInfo{
+		err = durable.Send(env.Client, ctx, id, svc.ProcessShipping, booking.ShippingInfo{
 			Address: "123 Main St", City: "Springfield", Zip: "62701",
 		})
 		if err != nil {
@@ -59,23 +59,23 @@ func TestBookingHappyPath(t *testing.T) {
 
 func TestBookingCancel(t *testing.T) {
 	svc := &booking.BookingService{}
-	testenv.RunAll(t, func(w *stateroutine.Worker) {
+	testenv.RunAll(t, func(w *durable.Worker) {
 		booking.RegisterHandlers(w, svc)
 	}, func(t *testing.T, env *testenv.Env) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		id := env.UniqueID("booking-cancel")
-		h, err := stateroutine.Start(env.Client, ctx, id, svc.ReserveItem, booking.BookingState{
+		h, err := durable.Go(env.Client, ctx, id, svc.ReserveItem, booking.BookingState{
 			UserID: "user-1", ItemID: "item-1",
 		})
 		if err != nil {
-			t.Fatalf("Start failed: %v", err)
+			t.Fatalf("Go failed: %v", err)
 		}
 
 		time.Sleep(2 * time.Second)
 
-		resp, err := stateroutine.ClientCall(env.Client, ctx, id, svc.CancelBooking, booking.CancelReq{Reason: "changed mind"})
+		resp, err := durable.Call(env.Client, ctx, id, svc.CancelBooking, booking.CancelReq{Reason: "changed mind"})
 		if err != nil {
 			t.Fatalf("ClientCall CancelBooking failed: %v", err)
 		}
@@ -100,17 +100,17 @@ func TestBookingExpireReservation(t *testing.T) {
 	svc := &booking.BookingService{
 		ReservationTimeout: 1 * time.Millisecond,
 	}
-	testenv.RunAll(t, func(w *stateroutine.Worker) {
+	testenv.RunAll(t, func(w *durable.Worker) {
 		booking.RegisterHandlers(w, svc)
 	}, func(t *testing.T, env *testenv.Env) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		h, err := stateroutine.Start(env.Client, ctx, env.UniqueID("booking-expire"), svc.ReserveItem, booking.BookingState{
+		h, err := durable.Go(env.Client, ctx, env.UniqueID("booking-expire"), svc.ReserveItem, booking.BookingState{
 			UserID: "user-1", ItemID: "item-1",
 		})
 		if err != nil {
-			t.Fatalf("Start failed: %v", err)
+			t.Fatalf("Go failed: %v", err)
 		}
 
 		result, err := h.Get(ctx)
@@ -131,23 +131,23 @@ func TestBookingPaymentFailure(t *testing.T) {
 			return errors.New("payment gateway unavailable")
 		},
 	}
-	testenv.RunAll(t, func(w *stateroutine.Worker) {
+	testenv.RunAll(t, func(w *durable.Worker) {
 		booking.RegisterHandlers(w, svc)
 	}, func(t *testing.T, env *testenv.Env) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
 		id := env.UniqueID("booking-pay-fail")
-		h, err := stateroutine.Start(env.Client, ctx, id, svc.ReserveItem, booking.BookingState{
+		h, err := durable.Go(env.Client, ctx, id, svc.ReserveItem, booking.BookingState{
 			UserID: "user-1", ItemID: "item-1",
 		})
 		if err != nil {
-			t.Fatalf("Start failed: %v", err)
+			t.Fatalf("Go failed: %v", err)
 		}
 
 		time.Sleep(2 * time.Second)
 
-		err = stateroutine.ClientSend(env.Client, ctx, id, svc.ProcessPayment, booking.PaymentInfo{
+		err = durable.Send(env.Client, ctx, id, svc.ProcessPayment, booking.PaymentInfo{
 			CardNumber: "4111111111111111", Expiry: "12/26",
 		})
 		if err != nil {
@@ -168,25 +168,25 @@ func TestBookingPaymentFailure(t *testing.T) {
 
 func TestBookingQueryStatus(t *testing.T) {
 	svc := &booking.BookingService{}
-	testenv.RunAll(t, func(w *stateroutine.Worker) {
+	testenv.RunAll(t, func(w *durable.Worker) {
 		booking.RegisterHandlers(w, svc)
 	}, func(t *testing.T, env *testenv.Env) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		id := env.UniqueID("booking-query")
-		_, err := stateroutine.Start(env.Client, ctx, id, svc.ReserveItem, booking.BookingState{
+		_, err := durable.Go(env.Client, ctx, id, svc.ReserveItem, booking.BookingState{
 			UserID: "user-1", ItemID: "item-1",
 		})
 		if err != nil {
-			t.Fatalf("Start failed: %v", err)
+			t.Fatalf("Go failed: %v", err)
 		}
 
 		// Poll for "reserved" status
 		var status booking.StatusResp
 		for i := 0; i < 20; i++ {
 			time.Sleep(500 * time.Millisecond)
-			status, err = stateroutine.ClientQuery(env.Client, ctx, id, booking.StatusResp{})
+			status, err = durable.Query(env.Client, ctx, id, booking.StatusResp{})
 			if err == nil && status.Status == "reserved" {
 				break
 			}
@@ -197,7 +197,7 @@ func TestBookingQueryStatus(t *testing.T) {
 		t.Logf("Query status after reserve: %+v", status)
 
 		// Send payment
-		err = stateroutine.ClientSend(env.Client, ctx, id, svc.ProcessPayment, booking.PaymentInfo{
+		err = durable.Send(env.Client, ctx, id, svc.ProcessPayment, booking.PaymentInfo{
 			CardNumber: "4111111111111111", Expiry: "12/26",
 		})
 		if err != nil {
@@ -207,7 +207,7 @@ func TestBookingQueryStatus(t *testing.T) {
 		// Poll for "paid" status
 		for i := 0; i < 20; i++ {
 			time.Sleep(500 * time.Millisecond)
-			status, err = stateroutine.ClientQuery(env.Client, ctx, id, booking.StatusResp{})
+			status, err = durable.Query(env.Client, ctx, id, booking.StatusResp{})
 			if err == nil && status.Status == "paid" {
 				break
 			}
@@ -218,13 +218,13 @@ func TestBookingQueryStatus(t *testing.T) {
 		t.Logf("Query status after payment: %+v", status)
 
 		// Complete the workflow so it doesn't remain as an orphan.
-		err = stateroutine.ClientSend(env.Client, ctx, id, svc.ProcessShipping, booking.ShippingInfo{
+		err = durable.Send(env.Client, ctx, id, svc.ProcessShipping, booking.ShippingInfo{
 			Address: "123 Main St", City: "Springfield", Zip: "62701",
 		})
 		if err != nil {
 			t.Fatalf("ClientSend ShippingInfo failed: %v", err)
 		}
-		result, err := stateroutine.ClientGet[booking.BookingResult](env.Client, ctx, id)
+		result, err := durable.Get[booking.BookingResult](env.Client, ctx, id)
 		if err != nil {
 			t.Fatalf("Get failed: %v", err)
 		}

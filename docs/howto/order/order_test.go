@@ -5,31 +5,31 @@ import (
 	"testing"
 	"time"
 
-	"github.com/raymondji/stateroutine/docs/howto/order"
-	"github.com/raymondji/stateroutine/stateroutine"
-	"github.com/raymondji/stateroutine/testenv"
+	"github.com/raymondji/durableroutine-go/docs/howto/order"
+	"github.com/raymondji/durableroutine-go/durable"
+	"github.com/raymondji/durableroutine-go/testenv"
 )
 
 func TestOrderHappyPath(t *testing.T) {
 	svc := &order.OrderService{
 		ShipTimeout: 1 * time.Millisecond,
 	}
-	testenv.RunAll(t, func(w *stateroutine.Worker) {
+	testenv.RunAll(t, func(w *durable.Worker) {
 		order.RegisterHandlers(w, svc)
 	}, func(t *testing.T, env *testenv.Env) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		id := env.UniqueID("order-happy")
-		h, err := stateroutine.Start(env.Client, ctx, id, svc.CreateOrder, order.OrderState{})
+		h, err := durable.Go(env.Client, ctx, id, svc.CreateOrder, order.OrderState{})
 		if err != nil {
-			t.Fatalf("Start failed: %v", err)
+			t.Fatalf("Go failed: %v", err)
 		}
 
 		// Wait for workflow to reach Select
 		time.Sleep(2 * time.Second)
 
-		err = stateroutine.ClientSend(env.Client, ctx, id, svc.PlaceOrder, order.PlaceOrderReq{
+		err = durable.Send(env.Client, ctx, id, svc.PlaceOrder, order.PlaceOrderReq{
 			OrderID: "ORD-1", Items: []string{"widget"}, PaymentMethod: "card", Total: 99.99,
 		})
 		if err != nil {
@@ -50,21 +50,21 @@ func TestOrderHappyPath(t *testing.T) {
 
 func TestOrderCancel(t *testing.T) {
 	svc := &order.OrderService{}
-	testenv.RunAll(t, func(w *stateroutine.Worker) {
+	testenv.RunAll(t, func(w *durable.Worker) {
 		order.RegisterHandlers(w, svc)
 	}, func(t *testing.T, env *testenv.Env) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		id := env.UniqueID("order-cancel")
-		h, err := stateroutine.Start(env.Client, ctx, id, svc.CreateOrder, order.OrderState{})
+		h, err := durable.Go(env.Client, ctx, id, svc.CreateOrder, order.OrderState{})
 		if err != nil {
-			t.Fatalf("Start failed: %v", err)
+			t.Fatalf("Go failed: %v", err)
 		}
 
 		time.Sleep(2 * time.Second)
 
-		err = stateroutine.ClientSend(env.Client, ctx, id, svc.PlaceOrder, order.PlaceOrderReq{
+		err = durable.Send(env.Client, ctx, id, svc.PlaceOrder, order.PlaceOrderReq{
 			OrderID: "ORD-2", Items: []string{"gadget"}, PaymentMethod: "card", Total: 49.99,
 		})
 		if err != nil {
@@ -74,7 +74,7 @@ func TestOrderCancel(t *testing.T) {
 		// Wait for PlaceOrder to process and reach the next Select
 		time.Sleep(2 * time.Second)
 
-		err = stateroutine.ClientSend(env.Client, ctx, id, svc.CancelOrder, order.CancelOrderReq{Reason: "changed mind"})
+		err = durable.Send(env.Client, ctx, id, svc.CancelOrder, order.CancelOrderReq{Reason: "changed mind"})
 		if err != nil {
 			t.Fatalf("ClientSend CancelOrder failed: %v", err)
 		}
@@ -95,15 +95,15 @@ func TestOrderExpire(t *testing.T) {
 	svc := &order.OrderService{
 		ExpireTimeout: 1 * time.Millisecond,
 	}
-	testenv.RunAll(t, func(w *stateroutine.Worker) {
+	testenv.RunAll(t, func(w *durable.Worker) {
 		order.RegisterHandlers(w, svc)
 	}, func(t *testing.T, env *testenv.Env) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		h, err := stateroutine.Start(env.Client, ctx, env.UniqueID("order-expire"), svc.CreateOrder, order.OrderState{})
+		h, err := durable.Go(env.Client, ctx, env.UniqueID("order-expire"), svc.CreateOrder, order.OrderState{})
 		if err != nil {
-			t.Fatalf("Start failed: %v", err)
+			t.Fatalf("Go failed: %v", err)
 		}
 
 		result, err := h.Get(ctx)

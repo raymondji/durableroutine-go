@@ -1,12 +1,12 @@
 # Design Doc: In-Memory Implementation
 
-This document describes the in-memory implementation of the stateroutine API, designed for deterministic unit testing without a Temporal server. The implementation lives in a separate `memoryimpl/` package.
+This document describes the in-memory implementation of the stateroutine API, designed for deterministic unit testing without a Temporal server. The implementation lives in a separate `backend/inmemory/` package.
 
 ## Package Structure
 
 ```
-memoryimpl/
-    client.go    — implements stateroutine.Client
+backend/inmemory/
+    client.go    — implements durable.Client
     runtime.go   — event loop, instance tracking, step execution
     clock.go     — controllable clock for deterministic timer testing
 ```
@@ -17,7 +17,7 @@ The `Runtime` is the central coordinator. It owns a map of stateroutine instance
 
 ```go
 type Runtime struct {
-    worker    *stateroutine.Worker
+    worker    *durable.Worker
     clock     *Clock
     instances map[string]*instance
 }
@@ -26,7 +26,7 @@ type instance struct {
     id           string
     handlerKey   string
     state        any
-    suspend      *serializedSuspend  // current suspend cases
+    cont         *serializedContinuation  // current continuation cases
     queryResults map[string]any      // persisted across transitions
     signals      map[string][]any    // buffered signals keyed by "send:{stateKind}:{msgKind}"
     done         bool
@@ -39,7 +39,7 @@ type instance struct {
 ### Creating a Runtime
 
 ```go
-func NewRuntime(w *stateroutine.Worker) *Runtime {
+func NewRuntime(w *durable.Worker) *Runtime {
     return &Runtime{
         worker:    w,
         clock:     NewClock(),
@@ -48,11 +48,11 @@ func NewRuntime(w *stateroutine.Worker) *Runtime {
 }
 ```
 
-The `Runtime` reads the handler registry from `stateroutine.Worker` via the exposed `Handlers()` getter (same getter needed by the Temporal implementation).
+The `Runtime` reads the handler registry from `durable.Worker` via the exposed `Handlers()` getter (same getter needed by the Temporal implementation).
 
 ## Client
 
-The `memoryimpl.Client` implements `stateroutine.Client` and holds a reference to the `Runtime`:
+The `inmemory.Client` implements `durable.Client` and holds a reference to the `Runtime`:
 
 ```go
 type Client struct {
@@ -62,11 +62,11 @@ type Client struct {
 
 ### Method Mappings
 
-| stateroutine.Client method | In-memory behavior |
+| durable.Client method | In-memory behavior |
 |---|---|
-| `start(ctx, id, kind, state)` | Create a new `instance` with `handlerKey = "handler:" + kind`. Run the handler immediately. Store the resulting suspend cases. |
-| `send(ctx, id, stateKind, msgKind, msg)` | Look up instance. If a matching `OnSend` case is suspended, fire it immediately. Otherwise, buffer the signal in `instance.signals["send:" + stateKind + ":" + msgKind]`. |
-| `call(ctx, id, methodName, req)` | Look up instance. Find the matching `OnCall` case. Run the call handler synchronously. Return the response. |
+| `start(ctx, id, kind, state)` | Create a new `instance` with `handlerKey = "handler:" + kind`. Run the handler immediately. Store the resulting continuation cases. |
+| `send(ctx, id, stateKind, msgKind, msg)` | Look up instance. If a matching `ReceiveSend` case case is waiting, fire it immediately. Otherwise, buffer the signal in `instance.signals["send:" + stateKind + ":" + msgKind]`. |
+| `call(ctx, id, methodName, req)` | Look up instance. Find the matching `ReceiveCall` case. Run the call handler synchronously. Return the response. |
 | `query(ctx, id, queryName)` | Look up instance. Return `instance.queryResults[queryName]`. |
 | `get(ctx, id)` | If instance is done, return result immediately. Otherwise, block on a channel until the instance completes. |
 
@@ -77,7 +77,7 @@ When `start` is called:
 2. Look up the handler by `"handler:" + kind`
 3. Run the handler synchronously
 4. Capture query results, start requests, and send requests from the context
-5. Store the suspend cases on the instance
+5. Store the continuation cases on the instance
 6. Process start requests (recursively start children)
 7. Process send requests (deliver signals to target instances)
 
@@ -102,15 +102,15 @@ func (r *Runtime) AdvanceTime(d time.Duration)
 
 `Step()` evaluates all instances looking for one that can make progress:
 
-1. **Default cases**: If an instance has a `Default` suspend case, fire it (process the next handler).
-2. **Buffered signals**: If an instance has an `OnSend` case and a matching signal is buffered, consume the signal and fire the handler.
-3. **Expired timers**: If an instance has an `OnTimer` case and the clock has passed the timer deadline, fire the handler.
+1. **Default cases**: If an instance has a `Default` continuation case, fire it (process the next handler).
+2. **Buffered signals**: If an instance has a `ReceiveSend` case and a matching signal is buffered, consume the signal and fire the handler.
+3. **Expired timers**: If an instance has an `After` case and the clock has passed the timer deadline, fire the handler.
 
 When a handler fires:
 1. Run the handler synchronously
 2. Capture query results, start requests, send requests
 3. If the handler returns `Done`, mark the instance as done and notify waiters
-4. Otherwise, store the new suspend cases
+4. Otherwise, store the new continuation cases
 5. Process start requests and send requests
 
 ## Timer Simulation
@@ -139,7 +139,7 @@ When `Runtime.AdvanceTime(d)` is called:
 1. Advance the clock by `d`
 2. Call `StepAll()` to fire any expired timers and process cascading events
 
-Timer deadlines are stored as absolute times (`clock.Now().Add(duration)`) when the `OnTimer` suspend case is created. During `Step()`, the runtime checks `clock.Now() >= deadline` to decide whether to fire.
+Timer deadlines are stored as absolute times (`clock.Now().Add(duration)`) when the `After` continuation case is created. During `Step()`, the runtime checks `clock.Now() >= deadline` to decide whether to fire.
 
 No real sleeping occurs — all time is simulated.
 
@@ -153,12 +153,12 @@ signals map[string][]any  // key: "send:{stateKind}:{msgKind}", value: ordered q
 
 When `send` is called on the client:
 1. Build the signal key: `"send:" + stateKind + ":" + msgKind`
-2. Check if the instance is currently suspended with a matching `OnSend` case
+2. Check if the instance is currently waiting with a matching `ReceiveSend` case
 3. If yes: consume the signal immediately, fire the handler, process results
 4. If no: append to `instance.signals[key]` for later delivery
 
-When an instance enters a new suspend state (after a handler returns):
-- Check if any buffered signals match the new `OnSend` cases
+When an instance enters a new continuation state (after a handler returns):
+- Check if any buffered signals match the new `ReceiveSend` cases
 - If so, they can be consumed on the next `Step()` call
 
 This matches Temporal's signal buffering behavior: signals that arrive before the workflow is ready to receive them are queued.
@@ -179,7 +179,7 @@ runtime.AdvanceTime(24 * time.Hour)         // Fire timers
 
 ## Exposed Getters Needed
 
-The `stateroutine.Worker` must expose (same as Temporal impl):
+The `durable.Worker` must expose (same as Temporal impl):
 - `TaskQueue() string` — returns the task queue name
 - `Handlers() map[string]handlerEntry` — returns the handler registry
 
@@ -191,38 +191,38 @@ Additionally, the `Case` struct fields are currently unexported. The in-memory r
 - `Case.State`
 - `Case.HandlerKey`
 
-These can be exposed via getter methods on `Case` or by making the `Suspend` struct expose its cases via a method.
+These can be exposed via getter methods on `Case` or by making the `Continuation` struct expose its cases via a method.
 
 ## Example Test Usage
 
 ```go
 func TestBookingHappyPath(t *testing.T) {
     svc := &BookingService{}
-    w := stateroutine.NewWorker("test-queue")
+    w := durable.NewWorker("test-queue")
     booking.RegisterHandlers(w, svc)
 
-    rt := memoryimpl.NewRuntime(w)
+    rt := inmemory.NewRuntime(w)
     client := rt.Client()
     ctx := context.Background()
 
     // Start a booking
-    h, err := stateroutine.Start(client, ctx, "booking-1", svc.ReserveItem,
+    h, err := durable.Start(client, ctx, "booking-1", svc.ReserveItem,
         BookingState{UserID: "user-1", ItemID: "item-1"})
     require.NoError(t, err)
 
     // Verify status is "reserved"
-    status, err := stateroutine.ClientQuery(client, ctx, "booking-1", StatusResp{})
+    status, err := durable.ClientQuery(client, ctx, "booking-1", StatusResp{})
     require.NoError(t, err)
     assert.Equal(t, "reserved", status.Status)
 
     // Send payment
-    err = stateroutine.ClientSend(client, ctx, "booking-1", svc.ProcessPayment,
+    err = durable.ClientSend(client, ctx, "booking-1", svc.ProcessPayment,
         PaymentInfo{CardNumber: "4111111111111234", Expiry: "12/27"})
     require.NoError(t, err)
     rt.StepAll()
 
     // Send shipping
-    err = stateroutine.ClientSend(client, ctx, "booking-1", svc.ProcessShipping,
+    err = durable.ClientSend(client, ctx, "booking-1", svc.ProcessShipping,
         ShippingInfo{Address: "123 Main St", City: "Springfield", Zip: "62704"})
     require.NoError(t, err)
     rt.StepAll()

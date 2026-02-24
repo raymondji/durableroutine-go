@@ -1,31 +1,32 @@
-package memoryimpl
+package inmemory
 
 import (
 	"context"
 	"fmt"
 
-	"github.com/raymondji/stateroutine/stateroutine"
+	"github.com/raymondji/durableroutine-go/durable"
+	"github.com/raymondji/durableroutine-go/internal/durablecore"
 )
 
 type client struct {
 	runtime *Runtime
 }
 
-var _ stateroutine.ClientImpl = (*client)(nil)
+var _ durable.ClientImpl = (*client)(nil)
 
-func (c *client) Start(_ context.Context, id string, kind string, state any) error {
+func (c *client) Go(_ context.Context, id string, kind string, state any) error {
 	return c.runtime.start(id, kind, state)
 }
 
 func (c *client) Send(_ context.Context, id string, stateKind string, msgKind string, msg any) error {
-	signalKey := "send:" + stateKind + ":" + msgKind
+	sendKey := durablecore.SendKey(stateKind, msgKind)
 	c.runtime.mu.Lock()
 	inst, ok := c.runtime.instances[id]
 	c.runtime.mu.Unlock()
 	if !ok {
-		return fmt.Errorf("stateroutine %s not found", id)
+		return fmt.Errorf("routine %s not found", id)
 	}
-	inst.signalChan <- signal{key: signalKey, msg: msg}
+	inst.sendCh <- sendMsg{key: sendKey, msg: msg}
 	return nil
 }
 
@@ -34,11 +35,11 @@ func (c *client) Call(_ context.Context, id string, stateKind string, reqKind st
 	inst, ok := c.runtime.instances[id]
 	c.runtime.mu.Unlock()
 	if !ok {
-		return nil, fmt.Errorf("stateroutine %s not found", id)
+		return nil, fmt.Errorf("routine %s not found", id)
 	}
 
 	callName := reqKind
-	handlerKey := "call:" + stateKind + ":" + reqKind
+	handlerKey := durablecore.CallKey(stateKind, reqKind)
 	respCh := make(chan callResp, 1)
 
 	inst.callChan <- callReq{
@@ -57,14 +58,14 @@ func (c *client) Query(_ context.Context, id string, queryName string) (any, err
 	inst, ok := c.runtime.instances[id]
 	c.runtime.mu.Unlock()
 	if !ok {
-		return nil, fmt.Errorf("stateroutine %s not found", id)
+		return nil, fmt.Errorf("routine %s not found", id)
 	}
 
 	inst.mu.Lock()
 	result, ok := inst.queryResults[queryName]
 	inst.mu.Unlock()
 	if !ok {
-		return nil, fmt.Errorf("no query result for %s on stateroutine %s", queryName, id)
+		return nil, fmt.Errorf("no query result for %s on routine %s", queryName, id)
 	}
 	return result, nil
 }
@@ -74,7 +75,7 @@ func (c *client) Get(_ context.Context, id string) (any, error) {
 	inst, ok := c.runtime.instances[id]
 	c.runtime.mu.Unlock()
 	if !ok {
-		return nil, fmt.Errorf("stateroutine %s not found", id)
+		return nil, fmt.Errorf("routine %s not found", id)
 	}
 
 	// Block until the instance is done.

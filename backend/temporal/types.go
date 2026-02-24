@@ -1,11 +1,11 @@
-package temporalimpl
+package temporal
 
 import (
 	"encoding/json"
 	"time"
 )
 
-// WorkflowInput is the input to StateroutineWorkflow.
+// WorkflowInput is the input to RoutineWorkflow.
 type WorkflowInput struct {
 	HandlerKey       string       `json:"handlerKey"`
 	State            json.RawMessage `json:"state"`
@@ -21,26 +21,26 @@ type QueryEntry struct {
 
 // ActivityInput is passed to the RunHandler activity.
 type ActivityInput struct {
-	HandlerKey     string `json:"handlerKey"`
-	StateroutineID string `json:"stateroutineID"`
-	State          json.RawMessage `json:"state"`
-	Message        json.RawMessage `json:"message,omitempty"`
-	Error          string `json:"error,omitempty"`
+	HandlerKey string `json:"handlerKey"`
+	RoutineID  string `json:"routineID"`
+	State      json.RawMessage `json:"state"`
+	Message    json.RawMessage `json:"message,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 // ActivityOutput is returned by the RunHandler activity.
 type ActivityOutput struct {
 	Done          bool              `json:"done"`
 	Result        json.RawMessage   `json:"result,omitempty"`
-	Suspend       *SerializedSuspend `json:"suspend,omitempty"`
+	Continuation  *SerializedContinuation `json:"continuation,omitempty"`
 	QueryResults  []QueryEntry      `json:"queryResults,omitempty"`
 	StartRequests []StartEntry      `json:"startRequests,omitempty"`
 	SendRequests  []SendEntry       `json:"sendRequests,omitempty"`
 	CallResponse  json.RawMessage   `json:"callResponse,omitempty"`
 }
 
-// SerializedSuspend is the wire format for a Suspend value.
-type SerializedSuspend struct {
+// SerializedContinuation is the wire format for a Continuation value.
+type SerializedContinuation struct {
 	Cases []SerializedCase `json:"cases"`
 }
 
@@ -54,17 +54,17 @@ type SerializedCase struct {
 	HandlerKey    string          `json:"handlerKey"`
 }
 
-// StartEntry is a request to start a child stateroutine.
+// StartEntry is a request to start a child routine.
 type StartEntry struct {
-	StateroutineID string `json:"stateroutineID"`
-	StateKind      string `json:"stateKind"`
-	State          json.RawMessage `json:"state"`
+	RoutineID string `json:"routineID"`
+	StateKind string `json:"stateKind"`
+	State     json.RawMessage `json:"state"`
 }
 
-// SendEntry is a request to send a signal to another stateroutine.
+// SendEntry is a request to send a message to another routine.
 type SendEntry struct {
-	StateroutineID string          `json:"stateroutineID"`
-	StateKind      string          `json:"stateKind"`
-	MsgKind        string          `json:"msgKind"`
-	Msg            json.RawMessage `json:"msg"`
+	RoutineID string          `json:"routineID"`
+	StateKind string          `json:"stateKind"`
+	MsgKind   string          `json:"msgKind"`
+	Msg       json.RawMessage `json:"msg"`
 }

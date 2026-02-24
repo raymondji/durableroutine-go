@@ -7,13 +7,13 @@ import (
 
 	temporalclient "go.temporal.io/sdk/client"
 
-	"github.com/raymondji/stateroutine/stateroutine"
-	"github.com/raymondji/stateroutine/temporalimpl"
+	"github.com/raymondji/durableroutine-go/backend/temporal"
+	"github.com/raymondji/durableroutine-go/durable"
 )
 
 // SetupTemporal creates a Temporal client, unique task queue, registers handlers via
 // registerFn, starts a worker, and returns an Env ready for testing.
-func SetupTemporal(t *testing.T, registerFn func(w *stateroutine.Worker)) *Env {
+func SetupTemporal(t *testing.T, registerFn func(w *durable.Worker)) *Env {
 	t.Helper()
 
 	tc, err := temporalclient.Dial(temporalclient.Options{
@@ -26,10 +26,10 @@ func SetupTemporal(t *testing.T, registerFn func(w *stateroutine.Worker)) *Env {
 
 	taskQueue := fmt.Sprintf("test-%s-%d", t.Name(), time.Now().UnixNano())
 
-	w := stateroutine.NewWorker(taskQueue)
+	w := durable.NewWorker(taskQueue)
 	registerFn(w)
 
-	tw := temporalimpl.NewWorker(tc, w)
+	tw := temporal.NewWorker(tc, w)
 	go func() {
 		if err := tw.Start(); err != nil {
 			t.Logf("worker start error: %v", err)
@@ -40,8 +40,8 @@ func SetupTemporal(t *testing.T, registerFn func(w *stateroutine.Worker)) *Env {
 	// Give worker time to start polling.
 	time.Sleep(500 * time.Millisecond)
 
-	client := temporalimpl.NewClient(tc, taskQueue)
-	srClient := stateroutine.NewClientFrom(client)
+	client := temporal.NewClient(tc, taskQueue)
+	srClient := durable.NewClientFrom(client)
 
 	return &Env{
 		Client: srClient,

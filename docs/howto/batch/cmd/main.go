@@ -7,9 +7,9 @@ import (
 
 	temporalclient "go.temporal.io/sdk/client"
 
-	"github.com/raymondji/stateroutine/docs/howto/batch"
-	"github.com/raymondji/stateroutine/stateroutine"
-	"github.com/raymondji/stateroutine/temporalimpl"
+	"github.com/raymondji/durableroutine-go/docs/howto/batch"
+	"github.com/raymondji/durableroutine-go/durable"
+	"github.com/raymondji/durableroutine-go/backend/temporal"
 )
 
 func main() {
@@ -23,10 +23,10 @@ func main() {
 
 	svc := &batch.BatchService{}
 
-	w := stateroutine.NewWorker("batch-queue")
+	w := durable.NewWorker("batch-queue")
 	batch.RegisterHandlers(w, svc)
 
-	tw := temporalimpl.NewWorker(tc, w)
+	tw := temporal.NewWorker(tc, w)
 	go func() {
 		if err := tw.Start(); err != nil {
 			log.Fatal(err)
@@ -34,7 +34,7 @@ func main() {
 	}()
 	defer tw.Stop()
 
-	client := stateroutine.NewClientFrom(temporalimpl.NewClient(tc, "batch-queue"))
+	client := durable.NewClientFrom(temporal.NewClient(tc, "batch-queue"))
 
 	// Generate a batch of items.
 	items := make([]string, 350)
@@ -42,7 +42,7 @@ func main() {
 		items[i] = fmt.Sprintf("item-%d", i)
 	}
 
-	h, err := stateroutine.Start(client, ctx, "batch-001", svc.StartBatch, batch.BatchState{Items: items})
+	h, err := durable.Go(client, ctx, "batch-001", svc.StartBatch, batch.BatchState{Items: items})
 	if err != nil {
 		log.Fatal(err)
 	}

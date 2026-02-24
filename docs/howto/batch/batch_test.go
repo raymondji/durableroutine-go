@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/raymondji/stateroutine/docs/howto/batch"
-	"github.com/raymondji/stateroutine/stateroutine"
-	"github.com/raymondji/stateroutine/testenv"
+	"github.com/raymondji/durableroutine-go/docs/howto/batch"
+	"github.com/raymondji/durableroutine-go/durable"
+	"github.com/raymondji/durableroutine-go/testenv"
 )
 
 func makeItems(n int) []string {
@@ -21,17 +21,17 @@ func makeItems(n int) []string {
 
 func TestBatchCompleteAll(t *testing.T) {
 	svc := &batch.BatchService{}
-	testenv.RunAll(t, func(w *stateroutine.Worker) {
+	testenv.RunAll(t, func(w *durable.Worker) {
 		batch.RegisterHandlers(w, svc)
 	}, func(t *testing.T, env *testenv.Env) {
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 
-		h, err := stateroutine.Start(env.Client, ctx, env.UniqueID("batch-all"), svc.StartBatch, batch.BatchState{
+		h, err := durable.Go(env.Client, ctx, env.UniqueID("batch-all"), svc.StartBatch, batch.BatchState{
 			Items: makeItems(350),
 		})
 		if err != nil {
-			t.Fatalf("Start failed: %v", err)
+			t.Fatalf("Go failed: %v", err)
 		}
 
 		result, err := h.Get(ctx)
@@ -51,7 +51,7 @@ func TestBatchCompleteAll(t *testing.T) {
 
 func TestBatchCancelMidBatch(t *testing.T) {
 	svc := &batch.BatchService{}
-	testenv.RunAll(t, func(w *stateroutine.Worker) {
+	testenv.RunAll(t, func(w *durable.Worker) {
 		batch.RegisterHandlers(w, svc)
 	}, func(t *testing.T, env *testenv.Env) {
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -60,18 +60,18 @@ func TestBatchCancelMidBatch(t *testing.T) {
 		// Use a large number of items so the batch takes several seconds,
 		// giving us time to send a cancel signal.
 		id := env.UniqueID("batch-cancel")
-		h, err := stateroutine.Start(env.Client, ctx, id, svc.StartBatch, batch.BatchState{
+		h, err := durable.Go(env.Client, ctx, id, svc.StartBatch, batch.BatchState{
 			Items: makeItems(100000),
 		})
 		if err != nil {
-			t.Fatalf("Start failed: %v", err)
+			t.Fatalf("Go failed: %v", err)
 		}
 
 		// Send cancel after a short delay. The signal is buffered and
-		// picked up when the stateroutine reaches a Select with OnSend.
+		// picked up when the routine reaches a Select with ReceiveSend.
 		time.Sleep(2 * time.Second)
 
-		err = stateroutine.ClientSend(env.Client, ctx, id, svc.CancelBatch, batch.CancelMsg{Reason: "test cancel"})
+		err = durable.Send(env.Client, ctx, id, svc.CancelBatch, batch.CancelMsg{Reason: "test cancel"})
 		if err != nil {
 			t.Fatalf("ClientSend CancelMsg failed: %v", err)
 		}

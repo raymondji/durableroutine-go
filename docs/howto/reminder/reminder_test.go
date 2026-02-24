@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/raymondji/stateroutine/docs/howto/reminder"
-	"github.com/raymondji/stateroutine/stateroutine"
-	"github.com/raymondji/stateroutine/testenv"
+	"github.com/raymondji/durableroutine-go/docs/howto/reminder"
+	"github.com/raymondji/durableroutine-go/durable"
+	"github.com/raymondji/durableroutine-go/testenv"
 )
 
 func TestReminderFullSequence(t *testing.T) {
@@ -15,15 +15,15 @@ func TestReminderFullSequence(t *testing.T) {
 		InitialDelay:  1 * time.Millisecond,
 		FollowUpDelay: 1 * time.Millisecond,
 	}
-	testenv.RunAll(t, func(w *stateroutine.Worker) {
+	testenv.RunAll(t, func(w *durable.Worker) {
 		reminder.RegisterHandlers(w, svc)
 	}, func(t *testing.T, env *testenv.Env) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		h, err := stateroutine.Start(env.Client, ctx, env.UniqueID("reminder"), svc.SendInitial, reminder.InitialState{Email: "test@example.com"})
+		h, err := durable.Go(env.Client, ctx, env.UniqueID("reminder"), svc.SendInitial, reminder.InitialState{Email: "test@example.com"})
 		if err != nil {
-			t.Fatalf("Start failed: %v", err)
+			t.Fatalf("Go failed: %v", err)
 		}
 
 		result, err := h.Get(ctx)
@@ -31,7 +31,7 @@ func TestReminderFullSequence(t *testing.T) {
 			t.Fatalf("Get failed: %v", err)
 		}
 
-		_ = result // stateroutine.Unit{}
+		_ = result // durable.Unit{}
 		t.Logf("Reminder completed successfully")
 	})
 }

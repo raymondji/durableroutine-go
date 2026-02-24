@@ -7,9 +7,9 @@ import (
 
 	temporalclient "go.temporal.io/sdk/client"
 
-	"github.com/raymondji/stateroutine/docs/howto/pipeline"
-	"github.com/raymondji/stateroutine/stateroutine"
-	"github.com/raymondji/stateroutine/temporalimpl"
+	"github.com/raymondji/durableroutine-go/docs/howto/pipeline"
+	"github.com/raymondji/durableroutine-go/durable"
+	"github.com/raymondji/durableroutine-go/backend/temporal"
 )
 
 func main() {
@@ -24,10 +24,10 @@ func main() {
 	producerSvc := &pipeline.ProducerService{}
 	consumerSvc := &pipeline.ConsumerService{}
 
-	w := stateroutine.NewWorker("pipeline-queue")
+	w := durable.NewWorker("pipeline-queue")
 	pipeline.RegisterHandlers(w, producerSvc, consumerSvc)
 
-	tw := temporalimpl.NewWorker(tc, w)
+	tw := temporal.NewWorker(tc, w)
 	go func() {
 		if err := tw.Start(); err != nil {
 			log.Fatal(err)
@@ -35,19 +35,19 @@ func main() {
 	}()
 	defer tw.Stop()
 
-	client := stateroutine.NewClientFrom(temporalimpl.NewClient(tc, "pipeline-queue"))
+	client := durable.NewClientFrom(temporal.NewClient(tc, "pipeline-queue"))
 
 	// Start the consumer first so it's ready to receive.
-	consumerH, err := stateroutine.Start(client, ctx, "consumer-1",
+	consumerH, err := durable.Go(client, ctx, "consumer-1",
 		consumerSvc.StartConsumer, pipeline.ConsumerState{Name: "my-consumer"})
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Start the producer, pointing it at the consumer.
-	if _, err := stateroutine.Start(client, ctx, "producer-1", producerSvc.Produce, pipeline.ProducerState{
-		Items:                  []string{"alpha", "bravo", "charlie", "delta"},
-		ConsumerStateroutineID: "consumer-1",
+	if _, err := durable.Go(client, ctx, "producer-1", producerSvc.Produce, pipeline.ProducerState{
+		Items:             []string{"alpha", "bravo", "charlie", "delta"},
+		ConsumerRoutineID: "consumer-1",
 	}); err != nil {
 		log.Fatal(err)
 	}
