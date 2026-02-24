@@ -16,4 +16,4 @@ Each how-to guide contains a README.md that describes it and runnable code.
 
 # Reference
 
-The code is the reference.
+The code is the reference. We try to thoroughly document behaviours.
