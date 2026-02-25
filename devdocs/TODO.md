@@ -18,6 +18,14 @@ https://github.com/indeedeng/iwf
 
 These are not ready for Claude to work on yet.
 
+## Cancel signals/timeouts
+
+E.g. if you want to race a signal to do something and a cancellation timeout. 
+
+If the timeout happens, we need to cancel the signal (or clear the queued up signals?) so that later on the signal does not get "reused". How do make sure we consume the signal and not just let it sit in the queue?
+
+If the signal happens, we need to make sure we clear the timer. (I think this may happen already, since I don't think we queue up timers the same way we queue up signals).
+
 ## Activity heartbeats
 
 Long-running handlers can't report progress or detect cancellation mid-execution. Would need to plumb heartbeat capability through `durable.Context`.
