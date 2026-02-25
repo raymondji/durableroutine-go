@@ -248,6 +248,284 @@ We explored making Then compose separate durable routines rather than handlers w
 - Each pipeline step becomes a separate Temporal workflow — heavier execution model.
 - Can be built later on top of Then if the use case arises.
 
+## Concrete comparisons: with Then vs. without
+
+Then introduces a second way to chain handlers. The existing `Continue` embeds sequencing inside each handler; `Then` lifts sequencing into the caller. The question is whether that trade-off pays for itself. Below are several realistic examples compared side-by-side.
+
+### Example A: Trip saga (linear pipeline)
+
+The existing saga example. Three sequential bookings with compensation on failure.
+
+**Without Then (current):**
+
+```go
+// Every handler returns *Continuation[TripResult] and explicitly calls Continue to the next step.
+
+func (s *TripService) BookFlight(ctx *durable.Context, input TripInput) (*durable.Continuation[TripResult], error) {
+    flightConf, err := s.bookFlight(ctx, input.FlightID)
+    if err != nil { return nil, err }
+    return durable.Continue(s.BookHotel, FlightBookedInput{
+        TripID: input.TripID, HotelID: input.HotelID, CarRentalID: input.CarRentalID,
+        FlightConfirmation: flightConf,
+    }), nil
+}
+
+func (s *TripService) BookHotel(ctx *durable.Context, input FlightBookedInput) (*durable.Continuation[TripResult], error) {
+    hotelConf, err := s.bookHotel(ctx, input.HotelID)
+    if err != nil { return nil, err }
+    return durable.Continue(s.BookCar, HotelBookedInput{
+        TripID: input.TripID, CarRentalID: input.CarRentalID,
+        FlightConfirmation: input.FlightConfirmation, HotelConfirmation: hotelConf,
+    }), nil
+}
+
+func (s *TripService) BookCar(ctx *durable.Context, input HotelBookedInput) (*durable.Continuation[TripResult], error) {
+    carConf, err := s.bookCar(ctx, input.CarRentalID)
+    if err != nil { return nil, err }
+    return durable.Done(TripResult{
+        FlightConfirmation: input.FlightConfirmation,
+        HotelConfirmation:  input.HotelConfirmation,
+        CarConfirmation:    carConf,
+    }), nil
+}
+
+// Entry point: just starts the first step.
+func (s *TripService) StartTrip(ctx *durable.Context, input TripInput) (*durable.Continuation[TripResult], error) {
+    return durable.Continue(s.BookFlight, input), nil
+}
+```
+
+**With Then:**
+
+```go
+// Each handler returns its own result type and calls Done — doesn't know what comes next.
+// But the result must carry ALL state the next handler needs.
+
+func (s *TripService) BookFlight(ctx *durable.Context, input TripInput) (*durable.Continuation[FlightBookedInput], error) {
+    flightConf, err := s.bookFlight(ctx, input.FlightID)
+    if err != nil { return nil, err }
+    return durable.Done(FlightBookedInput{
+        TripID: input.TripID, HotelID: input.HotelID, CarRentalID: input.CarRentalID,
+        FlightConfirmation: flightConf,
+    }), nil
+}
+
+func (s *TripService) BookHotel(ctx *durable.Context, input FlightBookedInput) (*durable.Continuation[HotelBookedInput], error) {
+    hotelConf, err := s.bookHotel(ctx, input.HotelID)
+    if err != nil { return nil, err }
+    return durable.Done(HotelBookedInput{
+        TripID: input.TripID, CarRentalID: input.CarRentalID,
+        FlightConfirmation: input.FlightConfirmation, HotelConfirmation: hotelConf,
+    }), nil
+}
+
+func (s *TripService) BookCar(ctx *durable.Context, input HotelBookedInput) (*durable.Continuation[TripResult], error) {
+    carConf, err := s.bookCar(ctx, input.CarRentalID)
+    if err != nil { return nil, err }
+    return durable.Done(TripResult{
+        FlightConfirmation: input.FlightConfirmation,
+        HotelConfirmation:  input.HotelConfirmation,
+        CarConfirmation:    carConf,
+    }), nil
+}
+
+// Entry point: declares the full pipeline structure.
+func (s *TripService) StartTrip(ctx *durable.Context, input TripInput) (*durable.Continuation[TripResult], error) {
+    step0 := durable.Continue(s.BookFlight, input)
+    step1 := durable.Then(step0, s.BookHotel)
+    step2 := durable.Then(step1, s.BookCar)
+    return step2, nil
+}
+```
+
+**Observations:**
+- The handler bodies are nearly identical. `Continue(s.BookHotel, ...)` becomes `Done(FlightBookedInput{...})`. Same fields, same struct.
+- The key structural difference: each handler's result type changes from `TripResult` to its own output type (`FlightBookedInput`, `HotelBookedInput`). But these "result types" are really just the next handler's input — they carry the same accumulated state.
+- The pipeline is visible in one place (`StartTrip`) vs. embedded across handlers. Whether that's clearer is debatable — the handlers are already named `BookFlight → BookHotel → BookCar`, and `Continue(s.BookHotel, ...)` makes the next step obvious.
+- Registration is the same either way. RecoveryHandlers work the same.
+
+**Verdict: Marginal.** Then moves the sequencing into the entry point, but the handlers do essentially the same work. The "result type decoupling" doesn't save anything because the intermediate results must carry forward the same accumulated state.
+
+### Example B: Reusable identity verification sub-chain
+
+An identity verification flow (send code, wait for response, validate) reused across multiple routines with different result types.
+
+**Without Then:**
+
+```go
+// Can't reuse — the handlers are parameterized by the routine's result type.
+// You'd need separate handler sets for each routine that uses verification.
+
+// For AccountCreation routine:
+func (s *IdentityService) SendCodeForAccount(ctx *durable.Context, input VerifyForAccountInput) (*durable.Continuation[AccountResult], error) {
+    s.sendSMS(input.Phone, generateCode())
+    return durable.ReceiveSend(s.CheckCodeForAccount, WaitingForAccountInput{Phone: input.Phone}), nil
+}
+func (s *IdentityService) CheckCodeForAccount(ctx *durable.Context, input WaitingForAccountInput, code VerifyCode) (*durable.Continuation[AccountResult], error) {
+    if !s.validCode(input.Phone, code.Code) {
+        return durable.ReceiveSend(s.CheckCodeForAccount, input), nil // retry
+    }
+    return durable.Continue(accountSvc.CreateAccount, CreateAccountInput{Phone: input.Phone, Verified: true}), nil
+}
+
+// For PasswordReset routine — same logic, different result type:
+func (s *IdentityService) SendCodeForReset(ctx *durable.Context, input VerifyForResetInput) (*durable.Continuation[ResetResult], error) {
+    s.sendSMS(input.Phone, generateCode())
+    return durable.ReceiveSend(s.CheckCodeForReset, WaitingForResetInput{Phone: input.Phone}), nil
+}
+func (s *IdentityService) CheckCodeForReset(ctx *durable.Context, input WaitingForResetInput, code VerifyCode) (*durable.Continuation[ResetResult], error) {
+    if !s.validCode(input.Phone, code.Code) {
+        return durable.ReceiveSend(s.CheckCodeForReset, input), nil // retry
+    }
+    return durable.Continue(resetSvc.DoReset, DoResetInput{Phone: input.Phone}), nil
+}
+
+// Two separate handler sets, two separate registrations, duplicated verification logic.
+```
+
+**With Then:**
+
+```go
+// Verification is written once with its own result type.
+func (s *IdentityService) SendCode(ctx *durable.Context, input VerifyInput) (*durable.Continuation[VerifiedIdentity], error) {
+    s.sendSMS(input.Phone, generateCode())
+    return durable.ReceiveSend(s.CheckCode, WaitingInput{Phone: input.Phone}), nil
+}
+func (s *IdentityService) CheckCode(ctx *durable.Context, input WaitingInput, code VerifyCode) (*durable.Continuation[VerifiedIdentity], error) {
+    if !s.validCode(input.Phone, code.Code) {
+        return durable.ReceiveSend(s.CheckCode, input), nil // retry
+    }
+    return durable.Done(VerifiedIdentity{Phone: input.Phone}), nil
+}
+
+// Account creation routine — reuses the verification chain.
+func (s *AccountService) StartAccountCreation(ctx *durable.Context, input SignupInput) (*durable.Continuation[AccountResult], error) {
+    verify := durable.Continue(identitySvc.SendCode, VerifyInput{Phone: input.Phone})
+    return durable.Then(verify, s.CreateAccount), nil
+}
+
+// Password reset routine — reuses the same verification chain.
+func (s *ResetService) StartPasswordReset(ctx *durable.Context, input ResetInput) (*durable.Continuation[ResetResult], error) {
+    verify := durable.Continue(identitySvc.SendCode, VerifyInput{Phone: input.Phone})
+    return durable.Then(verify, s.DoReset), nil
+}
+
+// One handler set for verification, registered once. Used by multiple routines.
+```
+
+**Observations:**
+- Without Then, the identity verification logic must be duplicated for each routine that uses it, because the `Continuation[T]` result type `T` is fixed. Each copy has different input/state types too (to match the result type), even though the logic is identical.
+- With Then, the verification chain is written once with its own natural result type (`VerifiedIdentity`). Any routine can `Then` it into their pipeline.
+- The verification chain includes a suspension point (`ReceiveSend` — waiting for the user to enter the code). This is the key difference from a simple helper function — it's a durable sub-chain with its own wait/resume cycle.
+
+**Verdict: Clear win for Then.** Reusable sub-chains with suspension points are the primary use case.
+
+### Example C: Booking flow (event-driven state machine)
+
+The existing booking example. Each step waits for one of several events (payment, cancellation, timeout).
+
+**Without Then (current):**
+
+```go
+func (s *BookingService) ReserveItem(ctx *durable.Context, input BookingInput) (*durable.Continuation[BookingResult], error) {
+    reserved := ReservedInput{UserID: input.UserID, ItemID: input.ItemID}
+    return durable.Select(
+        durable.ReceiveSend(s.ProcessPayment, reserved),
+        durable.ReceiveCall(s.CancelBooking, reserved),
+        durable.After(15*time.Minute, s.ExpireReservation, reserved),
+    ), nil
+}
+```
+
+**With Then:** Then doesn't apply here. Each handler returns a Select with multiple possible next steps. The next handler depends on which event fires — it's not a linear pipeline.
+
+**Verdict: Then doesn't apply.** Event-driven branching is the domain of Select, not Then.
+
+### Example D: Onboarding (linear setup, then event-driven)
+
+A user onboarding routine: (1) provision account, (2) set up billing, (3) enter an event loop waiting for the user to activate or the trial to expire.
+
+**Without Then:**
+
+```go
+// All handlers return *Continuation[OnboardingResult].
+
+func (s *OnboardingSvc) ProvisionAccount(ctx *durable.Context, input SignupInput) (*durable.Continuation[OnboardingResult], error) {
+    accountID, err := s.createAccount(ctx, input.Email)
+    if err != nil { return nil, err }
+    return durable.Continue(s.SetupBilling, BillingInput{AccountID: accountID, Plan: input.Plan}), nil
+}
+
+func (s *OnboardingSvc) SetupBilling(ctx *durable.Context, input BillingInput) (*durable.Continuation[OnboardingResult], error) {
+    err := s.createSubscription(ctx, input.AccountID, input.Plan)
+    if err != nil { return nil, err }
+    return durable.Select(
+        durable.ReceiveSend(s.Activate, WaitingInput{AccountID: input.AccountID}),
+        durable.After(14*24*time.Hour, s.ExpireTrial, WaitingInput{AccountID: input.AccountID}),
+    ), nil
+}
+
+func (s *OnboardingSvc) Activate(ctx *durable.Context, input WaitingInput, _ ActivateMsg) (*durable.Continuation[OnboardingResult], error) {
+    return durable.Done(OnboardingResult{AccountID: input.AccountID, Status: "active"}), nil
+}
+
+func (s *OnboardingSvc) ExpireTrial(ctx *durable.Context, input WaitingInput) (*durable.Continuation[OnboardingResult], error) {
+    return durable.Done(OnboardingResult{AccountID: input.AccountID, Status: "expired"}), nil
+}
+```
+
+**With Then:**
+
+```go
+// ProvisionAccount returns its own result type. SetupBilling enters the event loop.
+
+func (s *OnboardingSvc) ProvisionAccount(ctx *durable.Context, input SignupInput) (*durable.Continuation[ProvisionedAccount], error) {
+    accountID, err := s.createAccount(ctx, input.Email)
+    if err != nil { return nil, err }
+    return durable.Done(ProvisionedAccount{AccountID: accountID, Plan: input.Plan}), nil
+}
+
+func (s *OnboardingSvc) SetupBilling(ctx *durable.Context, input ProvisionedAccount) (*durable.Continuation[OnboardingResult], error) {
+    err := s.createSubscription(ctx, input.AccountID, input.Plan)
+    if err != nil { return nil, err }
+    return durable.Select(
+        durable.ReceiveSend(s.Activate, WaitingInput{AccountID: input.AccountID}),
+        durable.After(14*24*time.Hour, s.ExpireTrial, WaitingInput{AccountID: input.AccountID}),
+    ), nil
+}
+
+// Entry point:
+func (s *OnboardingSvc) StartOnboarding(ctx *durable.Context, input SignupInput) (*durable.Continuation[OnboardingResult], error) {
+    provision := durable.Continue(s.ProvisionAccount, input)
+    return durable.Then(provision, s.SetupBilling), nil
+}
+
+// Activate and ExpireTrial are the same as before.
+```
+
+**Observations:**
+- The Then version is slightly cleaner: ProvisionAccount doesn't need to know that SetupBilling comes next, and the entry point shows the structure.
+- But the benefit is small. ProvisionAccount with Continue is already clear — `Continue(s.SetupBilling, ...)` reads naturally.
+- If ProvisionAccount were a reusable sub-chain used by multiple routines, Then would be a bigger win. But provisioning is typically specific to onboarding.
+- SetupBilling and the event-loop handlers are identical in both versions.
+
+**Verdict: Marginal.** Slight readability improvement in the entry point, but not enough to justify a new concept on its own.
+
+### Summary
+
+| Scenario | Then benefit |
+|---|---|
+| Linear pipeline (saga) | Marginal — moves sequencing to entry point, but handlers do the same work |
+| Reusable sub-chain with suspension points | Clear win — eliminates duplication when the same sub-chain is used across multiple routines |
+| Event-driven state machine | Not applicable — Select handles branching |
+| Mixed linear + event-driven | Marginal — small readability improvement |
+
+**Minor benefit: readability.** Then lifts the pipeline structure into the entry point, so you can see the sequence in one place instead of following `Continue` calls across handlers. But `Continue(s.BookHotel, ...)` already reads clearly, so this is incremental.
+
+**Major benefit: composability.** Then decouples a handler's result type from the routine's final result type. This enables writing a sub-chain once (with its own suspension points, waits, retries) and reusing it across multiple routines that have different result types. Without Then, you'd duplicate the entire sub-chain for each routine, or resort to a heavier child-routine approach. The identity verification example above demonstrates this clearly.
+
+For simple linear pipelines or event-driven flows, the current `Continue` approach works equally well and is simpler because there's only one way to chain handlers.
+
 ## Decision
 
 **Then + TerminalError.** RecoveryHandler stays. The total API addition is:
