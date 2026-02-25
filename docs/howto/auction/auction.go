@@ -66,7 +66,7 @@ func (AuctionResult) DurableKind() string { return "auction-result" }
 
 type BiddingInput struct {
 	ItemName   string
-	Duration   time.Duration
+	Deadline   time.Time
 	HighestBid float64
 	Leader     string
 	BidCount   int
@@ -85,7 +85,7 @@ func (s *AuctionService) OpenAuction(ctx *durable.Context, input AuctionInput) (
 
 	bidding := BiddingInput{
 		ItemName:   input.ItemName,
-		Duration:   input.Duration,
+		Deadline:   time.Now().Add(input.Duration),
 		HighestBid: input.StartingBid,
 	}
 
@@ -96,7 +96,7 @@ func (s *AuctionService) OpenAuction(ctx *durable.Context, input AuctionInput) (
 
 	return durable.Select(
 		durable.ReceiveCall(s.PlaceBid, bidding),
-		durable.After(input.Duration, s.CloseAuction, bidding),
+		durable.After(time.Until(bidding.Deadline), s.CloseAuction, bidding),
 	), nil
 }
 
@@ -108,7 +108,7 @@ func (s *AuctionService) PlaceBid(ctx *durable.Context, input BiddingInput, exte
 				Message:    fmt.Sprintf("bid too low, current highest is $%.2f", input.HighestBid),
 			}, durable.Select(
 				durable.ReceiveCall(s.PlaceBid, input),
-				durable.After(input.Duration, s.CloseAuction, input),
+				durable.After(time.Until(input.Deadline), s.CloseAuction, input),
 			), nil
 	}
 
@@ -132,7 +132,7 @@ func (s *AuctionService) PlaceBid(ctx *durable.Context, input BiddingInput, exte
 			Message:    "bid accepted, you are the highest bidder",
 		}, durable.Select(
 			durable.ReceiveCall(s.PlaceBid, input),
-			durable.After(input.Duration, s.CloseAuction, input),
+			durable.After(time.Until(input.Deadline), s.CloseAuction, input),
 		), nil
 }
 
@@ -145,7 +145,7 @@ func (s *AuctionService) BidFailed(ctx *durable.Context, input BiddingInput, ext
 			Message:  fmt.Sprintf("bid processing failed: %v", err),
 		}, durable.Select(
 			durable.ReceiveCall(s.PlaceBid, input),
-			durable.After(input.Duration, s.CloseAuction, input),
+			durable.After(time.Until(input.Deadline), s.CloseAuction, input),
 		), nil
 }
 
