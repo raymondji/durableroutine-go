@@ -1,4 +1,4 @@
-# Then and TerminalError — Sequential Continuation Composition
+# Chain and TerminalError — Sequential Continuation Composition
 
 ## Problem
 
@@ -9,10 +9,10 @@ Every suspension point in a durable routine requires a separately named handler 
 Two additions:
 
 ```go
-// Then: sequential composition. When inner's chain reaches Done(result T),
+// Chain: sequential composition. When inner's chain reaches Done(result T),
 // pass result as input to handler, which returns Continuation[U].
 // If inner's chain fails (error), the routine fails — handler never runs.
-func Then[T, U Payload](inner *Continuation[T], handler Handler[T, U]) *Continuation[U]
+func Chain[T, U Payload](inner *Continuation[T], handler Handler[T, U]) *Continuation[U]
 
 // TerminalError wraps an error to signal it should not be retried.
 // - From a regular handler: skip retries, go straight to RecoveryHandler.
@@ -31,21 +31,21 @@ Handler runs → fails with error
   └─ TerminalError  → skip retries          →           → RecoveryHandler (if registered)
 
 RecoveryHandler runs
-  ├─ returns (cont, nil)            → routine continues (Then chain continues if cont is Done)
+  ├─ returns (cont, nil)            → routine continues (Chain chain continues if cont is Done)
   ├─ returns (nil, regular error)   → retry TE per its RetryPolicy → exhausted → routine fails
   └─ returns (nil, TerminalError) → skip TE retries → routine fails
 ```
 
-### Interaction with Then
+### Interaction with Chain
 
-Given `Then(a, b)` where a handler in `a`'s chain fails:
+Given `Chain(a, b)` where a handler in `a`'s chain fails:
 
 1. RecoveryHandler fires (if registered). It has the failed step's exact input type.
 2. If RecoveryHandler returns `(cont, nil)` → chain continues. If `cont` reaches Done → **b runs with the Done result**.
-3. If RecoveryHandler returns `(nil, err)` → **routine fails. b never runs.** thenStack is discarded.
+3. If RecoveryHandler returns `(nil, err)` → **routine fails. b never runs.** chainStack is discarded.
 4. If no RecoveryHandler is registered → **routine fails. b never runs.**
 
-The RecoveryHandler is the decision point: recover (return continuation) or abort (return error). Then respects that decision. No ambiguity — the developer explicitly chooses whether the pipeline continues or stops.
+The RecoveryHandler is the decision point: recover (return continuation) or abort (return error). Chain respects that decision. No ambiguity — the developer explicitly chooses whether the pipeline continues or stops.
 
 ## TerminalError
 
@@ -82,9 +82,9 @@ Backend mapping:
 - **Temporal**: Handler returns TerminalError → activity wraps as `temporal.NewNonRetryableApplicationError` → Temporal skips retries → workflow sees error → checks for RecoveryHandler.
 - **In-memory**: No retry logic currently. TerminalError behaves the same as a regular error (RecoveryHandler fires on any error). If retry logic is added later, TerminalError will skip it.
 
-## Design: per-case thenStack
+## Design: per-case chainStack
 
-Each `Case` carries a `thenStack []string` — handler keys to invoke sequentially when the case's handler chain reaches Done.
+Each `Case` carries a `chainStack []string` — handler keys to invoke sequentially when the case's handler chain reaches Done.
 
 ```go
 type Case struct {
@@ -94,26 +94,26 @@ type Case struct {
     immediate     bool
     input         any
     handlerKey    string
-    thenStack     []string  // NEW: handler keys for Then chain
+    chainStack     []string  // NEW: handler keys for Chain chain
 }
 ```
 
-### How Then builds the thenStack
+### How Chain builds the chainStack
 
-Then copies the inner continuation's cases and appends the new handler's key to each case's thenStack:
+Chain copies the inner continuation's cases and appends the new handler's key to each case's chainStack:
 
 ```go
-func Then[T, U Payload](inner *Continuation[T], handler Handler[T, U]) *Continuation[U] {
+func Chain[T, U Payload](inner *Continuation[T], handler Handler[T, U]) *Continuation[U] {
     if inner.IsDone() {
         return Continue(handler, inner.Result())  // short-circuit
     }
     var zeroT T
     var zeroU U
-    thenKey := durablecore.HandlerKey(zeroT.DurableKind(), zeroU.DurableKind())
+    chainKey := durablecore.HandlerKey(zeroT.DurableKind(), zeroU.DurableKind())
     newCases := make([]Case, len(inner.cases))
     for i, c := range inner.cases {
         newCases[i] = c
-        newCases[i].thenStack = append(append([]string{}, c.thenStack...), thenKey)
+        newCases[i].chainStack = append(append([]string{}, c.chainStack...), chainKey)
     }
     return &Continuation[U]{cases: newCases}
 }
@@ -121,22 +121,22 @@ func Then[T, U Payload](inner *Continuation[T], handler Handler[T, U]) *Continua
 
 ### Trampoline behavior
 
-The trampoline maintains a `thenStack []string` variable:
+The trampoline maintains a `chainStack []string` variable:
 
 ```
-case fires → set thenStack = firedCase.thenStack
+case fires → set chainStack = firedCase.chainStack
 
 loop:
     output = runHandler(handlerKey, input, msg)
 
     if handler error (after retries + RecoveryHandler):
-        // routine fails — thenStack discarded
+        // routine fails — chainStack discarded
         return error
 
     if output.Done:
-        if len(thenStack) > 0:
-            handlerKey = thenStack[0]
-            thenStack = thenStack[1:]
+        if len(chainStack) > 0:
+            handlerKey = chainStack[0]
+            chainStack = chainStack[1:]
             input = output.Result    // Done result becomes input to next handler
             msg = nil
             continue
@@ -144,70 +144,70 @@ loop:
 
     // Non-Done: wait for next case
     wait for case → extract handlerKey, input, msg from fired case
-    // Combine fired case's thenStack with current outer thenStack:
-    thenStack = firedCase.thenStack + existingThenStack
+    // Combine fired case's chainStack with current outer chainStack:
+    chainStack = firedCase.chainStack + existingChainStack
 ```
 
-**thenStack propagation:** When a handler inside a Then chain returns non-Done cases, those cases may carry their own thenStacks (from nested Then). When a new case fires, the trampoline combines the new case's thenStack with the existing outer thenStack by prepending: `newCaseThenStack + outerThenStack`.
+**chainStack propagation:** When a handler inside a Chain chain returns non-Done cases, those cases may carry their own chainStacks (from nested Chain). When a new case fires, the trampoline combines the new case's chainStack with the existing outer chainStack by prepending: `newCaseChainStack + outerChainStack`.
 
 ## Composition with Select
 
-Per-case thenStacks compose naturally with Select. Select merges cases, each preserving its own thenStack. No restrictions needed.
+Per-case chainStacks compose naturally with Select. Select merges cases, each preserving its own chainStack. No restrictions needed.
 
 ```go
-// a's cases get thenStack [h1], b's cases get thenStack []
-Select(Then(a, h1), b)
+// a's cases get chainStack [h1], b's cases get chainStack []
+Select(Chain(a, h1), b)
 
-// a's cases get thenStack [h1], b's cases get thenStack [h2]
-Select(Then(a, h1), Then(b, h2))
+// a's cases get chainStack [h1], b's cases get chainStack [h2]
+Select(Chain(a, h1), Chain(b, h2))
 
-// All cases get thenStack [h1]
-Then(Select(a, b), h1)
+// All cases get chainStack [h1]
+Chain(Select(a, b), h1)
 
 // Nested Select flattens as before
 Select(Select(a, b), Select(c, d))  ==  Select(a, b, c, d)
 
-// Nested Then accumulates the stack
-Then(Then(a, h1), h2)  →  a's cases get thenStack [h1, h2]
+// Nested Chain accumulates the stack
+Chain(Chain(a, h1), h2)  →  a's cases get chainStack [h1, h2]
 ```
 
 ## No concurrency introduced
 
-Then does not introduce concurrency. At every point, exactly one handler runs. The thenStack is a return address — when Done is reached, the next handler runs sequentially. Select picks one winner; other branches are discarded.
+Chain does not introduce concurrency. At every point, exactly one handler runs. The chainStack is a return address — when Done is reached, the next handler runs sequentially. Select picks one winner; other branches are discarded.
 
-The goroutine analogy holds: a goroutine's sequential code after a function call maps to Then's "after Done, run the next handler."
+The goroutine analogy holds: a goroutine's sequential code after a function call maps to Chain's "after Done, run the next handler."
 
-## Example: multi-Then happy path
+## Example: multi-Chain happy path
 
 ```go
 func (s *TripService) StartTrip(ctx *durable.Context, input TripBooking) (*durable.Continuation[TripResult], error) {
     step0 := durable.Continue(s.BookFlight, FlightBooking{
         TripID: input.TripID, FlightID: input.FlightID,
     })                                                        // *Continuation[FlightResult]
-    step1 := durable.Then(step0, s.BookHotel)                  // *Continuation[HotelResult]
-    step2 := durable.Then(step1, s.BookCar)                    // *Continuation[TripResult]
+    step1 := durable.Chain(step0, s.BookHotel)                  // *Continuation[HotelResult]
+    step2 := durable.Chain(step1, s.BookCar)                    // *Continuation[TripResult]
     return step2, nil
 }
 ```
 
-Each handler has its own result type. BookFlight returns `*Continuation[FlightResult]`, BookHotel returns `*Continuation[HotelResult]`, BookCar returns `*Continuation[TripResult]`. Then bridges between them.
+Each handler has its own result type. BookFlight returns `*Continuation[FlightResult]`, BookHotel returns `*Continuation[HotelResult]`, BookCar returns `*Continuation[TripResult]`. Chain bridges between them.
 
-## Example: Then with RecoveryHandler (saga)
+## Example: Chain with RecoveryHandler (saga)
 
 ```go
 func (s *TripService) StartTrip(ctx *durable.Context, input TripBooking) (*durable.Continuation[TripResult], error) {
     step0 := durable.Continue(s.BookFlight, FlightBooking{
         TripID: input.TripID, FlightID: input.FlightID,
     })
-    step1 := durable.Then(step0, s.BookHotel)
-    step2 := durable.Then(step1, s.BookCar)
+    step1 := durable.Chain(step0, s.BookHotel)
+    step2 := durable.Chain(step1, s.BookCar)
     return step2, nil
 }
 
 // BookHotel's RecoveryHandler — has FlightBookedInput with flight confirmation
 func (s *TripService) CompensateHotel(ctx *durable.Context, input FlightBookedInput, err error) (*durable.Continuation[HotelResult], error) {
     s.cancelFlight(ctx, input.FlightConfirmation)
-    // Return error to abort the Then pipeline:
+    // Return error to abort the Chain pipeline:
     return nil, fmt.Errorf("hotel booking failed, flight cancelled: %w", err)
     // OR return Done to continue the pipeline with a compensated result:
     // return durable.Done(HotelResult{Status: "compensated", ...}), nil
@@ -222,14 +222,14 @@ The RecoveryHandler decides: return `(cont, nil)` to continue the pipeline, or `
 
 ## Explored alternatives
 
-### ThenCatch / Catch combinators
+### ChainCatch / Catch combinators
 
-We explored adding `ThenCatch(a, onSuccess, onError, errorInput)` and `Catch(a, onError, errorInput)` with per-level error handlers at the composition level.
+We explored adding `ChainCatch(a, onSuccess, onError, errorInput)` and `Catch(a, onError, errorInput)` with per-level error handlers at the composition level.
 
 **Rejected because:**
 - The error handler's `errorInput` is captured at construction time (before the pipeline runs), so it cannot include intermediate results from prior pipeline steps. For saga compensation, this means the error handler lacks the context needed to compensate (e.g., flight confirmation numbers).
 - RecoveryHandler already solves per-handler error recovery with the right input type. Adding composition-level error handlers creates two overlapping mechanisms.
-- The simpler model (Then + RecoveryHandler + TerminalError) covers the same use cases without new handler types or thenStack entry complexity.
+- The simpler model (Chain + RecoveryHandler + TerminalError) covers the same use cases without new handler types or chainStack entry complexity.
 
 ### Removing RecoveryHandler entirely
 
@@ -237,26 +237,26 @@ We explored replacing RecoveryHandler with composition-level error handling only
 
 **Rejected because:**
 - The composition-level error handler cannot receive the failed step's typed input (the "input gap" — see above). RecoveryHandler's key advantage is type-safe access to the step's accumulated state.
-- RecoveryHandler and Then are complementary: RecoveryHandler handles per-handler recovery, Then handles pipeline composition. They don't conflict.
+- RecoveryHandler and Chain are complementary: RecoveryHandler handles per-handler recovery, Chain handles pipeline composition. They don't conflict.
 
 ### Pipeline / Promise (separate routines)
 
-We explored making Then compose separate durable routines rather than handlers within a single routine.
+We explored making Chain compose separate durable routines rather than handlers within a single routine.
 
 **Deferred because:**
 - Requires a new `AwaitChild` continuation primitive (wait for a child routine's result).
 - Each pipeline step becomes a separate Temporal workflow — heavier execution model.
-- Can be built later on top of Then if the use case arises.
+- Can be built later on top of Chain if the use case arises.
 
-## Concrete comparisons: with Then vs. without
+## Concrete comparisons: with Chain vs. without
 
-Then introduces a second way to chain handlers. The existing `Continue` embeds sequencing inside each handler; `Then` lifts sequencing into the caller. The question is whether that trade-off pays for itself. Below are several realistic examples compared side-by-side.
+Chain introduces a second way to chain handlers. The existing `Continue` embeds sequencing inside each handler; `Chain` lifts sequencing into the caller. The question is whether that trade-off pays for itself. Below are several realistic examples compared side-by-side.
 
 ### Example A: Trip saga (linear pipeline)
 
 The existing saga example. Three sequential bookings with compensation on failure.
 
-**Without Then (current):**
+**Without Chain (current):**
 
 ```go
 // Every handler returns *Continuation[TripResult] and explicitly calls Continue to the next step.
@@ -295,7 +295,7 @@ func (s *TripService) StartTrip(ctx *durable.Context, input TripInput) (*durable
 }
 ```
 
-**With Then:**
+**With Chain:**
 
 ```go
 // Each handler returns its own result type and calls Done — doesn't know what comes next.
@@ -332,8 +332,8 @@ func (s *TripService) BookCar(ctx *durable.Context, input HotelBookedInput) (*du
 // Entry point: declares the full pipeline structure.
 func (s *TripService) StartTrip(ctx *durable.Context, input TripInput) (*durable.Continuation[TripResult], error) {
     step0 := durable.Continue(s.BookFlight, input)
-    step1 := durable.Then(step0, s.BookHotel)
-    step2 := durable.Then(step1, s.BookCar)
+    step1 := durable.Chain(step0, s.BookHotel)
+    step2 := durable.Chain(step1, s.BookCar)
     return step2, nil
 }
 ```
@@ -344,13 +344,13 @@ func (s *TripService) StartTrip(ctx *durable.Context, input TripInput) (*durable
 - The pipeline is visible in one place (`StartTrip`) vs. embedded across handlers. Whether that's clearer is debatable — the handlers are already named `BookFlight → BookHotel → BookCar`, and `Continue(s.BookHotel, ...)` makes the next step obvious.
 - Registration is the same either way. RecoveryHandlers work the same.
 
-**Verdict: Marginal.** Then moves the sequencing into the entry point, but the handlers do essentially the same work. The "result type decoupling" doesn't save anything because the intermediate results must carry forward the same accumulated state.
+**Verdict: Marginal.** Chain moves the sequencing into the entry point, but the handlers do essentially the same work. The "result type decoupling" doesn't save anything because the intermediate results must carry forward the same accumulated state.
 
 ### Example B: Reusable identity verification sub-chain
 
 An identity verification flow (send code, wait for response, validate) reused across multiple routines with different result types.
 
-**Without Then:**
+**Without Chain:**
 
 ```go
 // Can't reuse — the handlers are parameterized by the routine's result type.
@@ -383,7 +383,7 @@ func (s *IdentityService) CheckCodeForReset(ctx *durable.Context, input WaitingF
 // Two separate handler sets, two separate registrations, duplicated verification logic.
 ```
 
-**With Then:**
+**With Chain:**
 
 ```go
 // Verification is written once with its own result type.
@@ -401,30 +401,30 @@ func (s *IdentityService) CheckCode(ctx *durable.Context, input WaitingInput, co
 // Account creation routine — reuses the verification chain.
 func (s *AccountService) StartAccountCreation(ctx *durable.Context, input SignupInput) (*durable.Continuation[AccountResult], error) {
     verify := durable.Continue(identitySvc.SendCode, VerifyInput{Phone: input.Phone})
-    return durable.Then(verify, s.CreateAccount), nil
+    return durable.Chain(verify, s.CreateAccount), nil
 }
 
 // Password reset routine — reuses the same verification chain.
 func (s *ResetService) StartPasswordReset(ctx *durable.Context, input ResetInput) (*durable.Continuation[ResetResult], error) {
     verify := durable.Continue(identitySvc.SendCode, VerifyInput{Phone: input.Phone})
-    return durable.Then(verify, s.DoReset), nil
+    return durable.Chain(verify, s.DoReset), nil
 }
 
 // One handler set for verification, registered once. Used by multiple routines.
 ```
 
 **Observations:**
-- Without Then, the identity verification logic must be duplicated for each routine that uses it, because the `Continuation[T]` result type `T` is fixed. Each copy has different input/state types too (to match the result type), even though the logic is identical.
-- With Then, the verification chain is written once with its own natural result type (`VerifiedIdentity`). Any routine can `Then` it into their pipeline.
+- Without Chain, the identity verification logic must be duplicated for each routine that uses it, because the `Continuation[T]` result type `T` is fixed. Each copy has different input/state types too (to match the result type), even though the logic is identical.
+- With Chain, the verification chain is written once with its own natural result type (`VerifiedIdentity`). Any routine can `Chain` it into their pipeline.
 - The verification chain includes a suspension point (`ReceiveSend` — waiting for the user to enter the code). This is the key difference from a simple helper function — it's a durable sub-chain with its own wait/resume cycle.
 
-**Verdict: Clear win for Then.** Reusable sub-chains with suspension points are the primary use case.
+**Verdict: Clear win for Chain.** Reusable sub-chains with suspension points are the primary use case.
 
 ### Example C: Booking flow (event-driven state machine)
 
 The existing booking example. Each step waits for one of several events (payment, cancellation, timeout).
 
-**Without Then (current):**
+**Without Chain (current):**
 
 ```go
 func (s *BookingService) ReserveItem(ctx *durable.Context, input BookingInput) (*durable.Continuation[BookingResult], error) {
@@ -437,15 +437,15 @@ func (s *BookingService) ReserveItem(ctx *durable.Context, input BookingInput) (
 }
 ```
 
-**With Then:** Then doesn't apply here. Each handler returns a Select with multiple possible next steps. The next handler depends on which event fires — it's not a linear pipeline.
+**With Chain:** Chain doesn't apply here. Each handler returns a Select with multiple possible next steps. The next handler depends on which event fires — it's not a linear pipeline.
 
-**Verdict: Then doesn't apply.** Event-driven branching is the domain of Select, not Then.
+**Verdict: Chain doesn't apply.** Event-driven branching is the domain of Select, not Chain.
 
 ### Example D: Onboarding (linear setup, then event-driven)
 
 A user onboarding routine: (1) provision account, (2) set up billing, (3) enter an event loop waiting for the user to activate or the trial to expire.
 
-**Without Then:**
+**Without Chain:**
 
 ```go
 // All handlers return *Continuation[OnboardingResult].
@@ -474,7 +474,7 @@ func (s *OnboardingSvc) ExpireTrial(ctx *durable.Context, input WaitingInput) (*
 }
 ```
 
-**With Then:**
+**With Chain:**
 
 ```go
 // ProvisionAccount returns its own result type. SetupBilling enters the event loop.
@@ -497,41 +497,62 @@ func (s *OnboardingSvc) SetupBilling(ctx *durable.Context, input ProvisionedAcco
 // Entry point:
 func (s *OnboardingSvc) StartOnboarding(ctx *durable.Context, input SignupInput) (*durable.Continuation[OnboardingResult], error) {
     provision := durable.Continue(s.ProvisionAccount, input)
-    return durable.Then(provision, s.SetupBilling), nil
+    return durable.Chain(provision, s.SetupBilling), nil
 }
 
 // Activate and ExpireTrial are the same as before.
 ```
 
 **Observations:**
-- The Then version is slightly cleaner: ProvisionAccount doesn't need to know that SetupBilling comes next, and the entry point shows the structure.
+- The Chain version is slightly cleaner: ProvisionAccount doesn't need to know that SetupBilling comes next, and the entry point shows the structure.
 - But the benefit is small. ProvisionAccount with Continue is already clear — `Continue(s.SetupBilling, ...)` reads naturally.
-- If ProvisionAccount were a reusable sub-chain used by multiple routines, Then would be a bigger win. But provisioning is typically specific to onboarding.
+- If ProvisionAccount were a reusable sub-chain used by multiple routines, Chain would be a bigger win. But provisioning is typically specific to onboarding.
 - SetupBilling and the event-loop handlers are identical in both versions.
 
 **Verdict: Marginal.** Slight readability improvement in the entry point, but not enough to justify a new concept on its own.
 
 ### Summary
 
-| Scenario | Then benefit |
+| Scenario | Chain benefit |
 |---|---|
 | Linear pipeline (saga) | Marginal — moves sequencing to entry point, but handlers do the same work |
 | Reusable sub-chain with suspension points | Clear win — eliminates duplication when the same sub-chain is used across multiple routines |
 | Event-driven state machine | Not applicable — Select handles branching |
 | Mixed linear + event-driven | Marginal — small readability improvement |
 
-**Minor benefit: readability.** Then lifts the pipeline structure into the entry point, so you can see the sequence in one place instead of following `Continue` calls across handlers. But `Continue(s.BookHotel, ...)` already reads clearly, so this is incremental.
+**Minor benefit: readability.** Chain lifts the pipeline structure into the entry point, so you can see the sequence in one place instead of following `Continue` calls across handlers. But `Continue(s.BookHotel, ...)` already reads clearly, so this is incremental.
 
-**Major benefit: composability.** Then decouples a handler's result type from the routine's final result type. This enables writing a sub-chain once (with its own suspension points, waits, retries) and reusing it across multiple routines that have different result types. Without Then, you'd duplicate the entire sub-chain for each routine, or resort to a heavier child-routine approach. The identity verification example above demonstrates this clearly.
+**Major benefit: composability.** Chain decouples a handler's result type from the routine's final result type. This enables writing a sub-chain once (with its own suspension points, waits, retries) and reusing it across multiple routines that have different result types. Without Chain, you'd duplicate the entire sub-chain for each routine, or resort to a heavier child-routine approach. The identity verification example above demonstrates this clearly.
 
 For simple linear pipelines or event-driven flows, the current `Continue` approach works equally well and is simpler because there's only one way to chain handlers.
 
+### Does Chain reduce per-handler state? (No — for sagas)
+
+Initial intuition: "BookFlight only needs FlightID and returns FlightConfirmation, so it doesn't need to carry HotelID and CarRentalID for downstream handlers." But this breaks down when compensation is involved.
+
+**The problem:** In `Chain(Chain(Continue(BookFlight, ...), BookHotel), BookCar)`, Chain connects output→input: BookHotel's input IS BookFlight's output. If BookHotel fails, its RecoveryHandler needs the flight confirmation to cancel it. So BookFlight's output must carry the flight confirmation. And CompensateCar needs both flight and hotel confirmations — so BookHotel's output must carry both forward. The state accumulation is the same as without Chain.
+
+**Root cause: the serialization boundary.** In regular code, closures implicitly capture prior results (`flightConf` is just a local variable). In a durable system, closures can't cross suspension points. Any data needed for compensation must be explicitly serialized in handler input/output types.
+
+**Explored alternatives:**
+
+| Approach | State reduction | Type safe? | Complexity | Notes |
+|---|---|---|---|---|
+| Chain as-is | None | Yes | Low | Result types accumulate same as Continue |
+| Chain + extra data param | Partial (static config only) | Yes | Medium | New `ChainHandler[T, Extra, U]` type. Entry point provides static config (IDs known upfront) via `extra`. Dynamic results (confirmations from prior steps) still accumulate through the result chain. |
+| Runtime chain history | Full | No (runtime lookups) | High | Runtime saves each step's input/output. RecoveryHandlers query history by type. Breaks type safety. |
+| Per-handler compensation registration | Full | Yes | High | Each handler calls `RegisterCompensation(ctx, handler, input)`. Runtime runs compensations in reverse on failure. Different saga model — bigger change than Chain. |
+
+**Conclusion:** For sagas with compensation, state accumulation is inherent to the durability constraint. You can shuffle where the data lives, but the total data that must be serialized is the same. The approaches that achieve full separation (runtime history, compensation registration) are substantially more complex and represent different design patterns, not just Chain improvements.
+
+Chain's state-reduction benefit is real only for sub-chains that don't participate in compensation — like the identity verification example, where each handler's output is genuinely minimal.
+
 ## Decision
 
-**Then + TerminalError.** RecoveryHandler stays. The total API addition is:
+**Chain + TerminalError.** RecoveryHandler stays. The total API addition is:
 
 ```go
-func Then[T, U Payload](inner *Continuation[T], handler Handler[T, U]) *Continuation[U]
+func Chain[T, U Payload](inner *Continuation[T], handler Handler[T, U]) *Continuation[U]
 func TerminalError(err error) error
 func IsTerminal(err error) bool
 ```
