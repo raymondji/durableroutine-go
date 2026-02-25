@@ -18,6 +18,8 @@ https://github.com/indeedeng/iwf
 
 These are not ready for Claude to work on yet.
 
+## Consider making SetQueryResult a way to set a KV-store
+
 ## Cancel signals/timeouts
 
 E.g. if you want to race a signal to do something and a cancellation timeout. 

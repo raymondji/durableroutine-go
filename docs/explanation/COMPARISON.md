@@ -328,6 +328,70 @@ func (s *FanoutService) CollectResult(ctx *durable.Context, input CollectingInpu
 
 Temporal's approach is the most concise for simple fork/join. iWF requires explicit state definitions and channel coordination. Durable Routines gives each child full routine isolation (independent retries, timeouts, event history) at the cost of more explicit plumbing.
 
+### 6. Event loop / GenServer pattern
+
+Long-lived routines that manage concurrent state — like a provider managing multiple reservation slots — follow an event-loop pattern similar to Elixir's GenServer. The routine processes messages one at a time, updating state and looping back to wait for the next message.
+
+**Durable Routines** — use a helper method that defines the `Select` once, and have every handler return it:
+
+```go
+type ProviderState struct {
+    ProviderID   string
+    Reservations map[string]Reservation
+}
+
+type Reservation struct {
+    UserID string
+    SlotID string
+}
+
+// steadyStateSelect defines the event loop — the set of messages this routine handles.
+// Defined once, returned by every handler.
+func (s *Svc) steadyStateSelect(state ProviderState) *durable.Continuation[durable.Unit] {
+    return durable.Select(
+        durable.ReceiveSend(s.HandleReserve, state),
+        durable.ReceiveSend(s.HandleConfirmAndPay, state),
+        durable.ReceiveSend(s.HandleExpire, state),
+    )
+}
+
+// Init runs once, then enters the event loop.
+func (s *Svc) Init(ctx *durable.Context, input ProviderInput) (*durable.Continuation[durable.Unit], error) {
+    state := ProviderState{ProviderID: input.ProviderID, Reservations: map[string]Reservation{}}
+    return s.steadyStateSelect(state), nil
+}
+
+// Each handler does its work and loops back to the same Select.
+func (s *Svc) HandleReserve(ctx *durable.Context, state ProviderState, msg ReserveSlot) (*durable.Continuation[durable.Unit], error) {
+    state.Reservations[msg.SlotID] = Reservation{UserID: msg.UserID, SlotID: msg.SlotID}
+    return s.steadyStateSelect(state), nil
+}
+
+func (s *Svc) HandleConfirmAndPay(ctx *durable.Context, state ProviderState, msg ConfirmAndPay) (*durable.Continuation[durable.Unit], error) {
+    res, ok := state.Reservations[msg.SlotID]
+    if !ok || res.UserID != msg.UserID {
+        return s.steadyStateSelect(state), nil // reject stale/invalid
+    }
+    state.BookSlot(msg.SlotID, msg.UserID, msg.PaymentID)
+    delete(state.Reservations, msg.SlotID)
+    return s.steadyStateSelect(state), nil
+}
+
+func (s *Svc) HandleExpire(ctx *durable.Context, state ProviderState, msg ExpireMsg) (*durable.Continuation[durable.Unit], error) {
+    if _, ok := state.Reservations[msg.SlotID]; ok {
+        state.ReleaseSlot(msg.SlotID)
+        delete(state.Reservations, msg.SlotID)
+    }
+    return s.steadyStateSelect(state), nil
+}
+```
+
+The `steadyStateSelect` helper keeps the Select definition in one place. Adding a new message type means updating the helper and adding one handler — every existing handler automatically picks up the change because they all call the same method.
+
+This is analogous to a Go goroutine running a `for { select { ... } }` loop, or an Elixir GenServer processing messages sequentially with `handle_cast`/`handle_call`/`handle_info`. Each message is handled in order against the current state.
+
+**Why not use an intermediate handler?** You could write a `WaitForActivity` handler that returns the Select, and have each handler `Continue(WaitForActivity, state)`. This works but costs an extra Temporal activity per message (the `WaitForActivity` handler runs as an activity even though it does no real work). Returning the Select directly from each handler via the helper method avoids this overhead — one activity per message.
+
 ## What Durable Routines don't have (yet)
 
 | Feature | iWF | Durable Routines |
