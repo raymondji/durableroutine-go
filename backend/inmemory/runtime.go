@@ -171,8 +171,8 @@ func (r *Runtime) runHandler(inst *instance, handlerKey string, input any, msg a
 	sctx := durable.NewContext(context.Background(), inst.id)
 	output, err := entry.Runner(sctx, rawInput, rawMsg, "")
 	if err != nil {
-		// Check for a terminal error handler.
-		teKey := entry.Options.WithTerminalErrorHandlerKey()
+		// Check for a recovery handler.
+		teKey := entry.Options.RecoveryHandlerKey()
 		if teKey != "" {
 			if teEntry, ok := r.handlers[teKey]; ok {
 				teSctx := durable.NewContext(context.Background(), inst.id)

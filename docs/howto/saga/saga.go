@@ -1,6 +1,6 @@
-// Package saga demonstrates the SAGA compensation pattern using terminal error
+// Package saga demonstrates the SAGA compensation pattern using recovery
 // handlers. Each booking step runs as its own activity with independent retries.
-// When all retries are exhausted, the terminal error handler runs compensation
+// When all retries are exhausted, the recovery handler runs compensation
 // logic (cancelling previously booked services) instead of failing the routine.
 //
 // Continue checkpoints state between steps so that if the worker crashes after
@@ -166,12 +166,12 @@ func RegisterHandlers(w *durable.Worker, svc *TripService) {
 	})
 	durable.RegisterHandler(w, svc.BookHotel, durable.HandlerOptions{
 		RetryPolicy: durable.RetryPolicy{MaxAttempts: 3},
-	}).WithTerminalErrorHandler(svc.CompensateHotel, durable.HandlerOptions{
+	}).WithRecoveryHandler(svc.CompensateHotel, durable.HandlerOptions{
 		RetryPolicy: durable.RetryPolicy{MaxAttempts: 1},
 	})
 	durable.RegisterHandler(w, svc.BookCar, durable.HandlerOptions{
 		RetryPolicy: durable.RetryPolicy{MaxAttempts: 3},
-	}).WithTerminalErrorHandler(svc.CompensateCar, durable.HandlerOptions{
+	}).WithRecoveryHandler(svc.CompensateCar, durable.HandlerOptions{
 		RetryPolicy: durable.RetryPolicy{MaxAttempts: 1},
 	})
 }

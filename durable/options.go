@@ -4,8 +4,8 @@ import "time"
 
 // RetryPolicy configures retry behavior for handler activities.
 // Fields map to Temporal's native retry policy.
-// When all retries are exhausted and a terminal error handler is registered
-// (via WithTerminalErrorHandler on the registration), the terminal error handler is
+// When all retries are exhausted and a recovery handler is registered
+// (via WithRecoveryHandler on the registration), the recovery handler is
 // invoked instead of failing the routine.
 type RetryPolicy struct {
 	MaxAttempts        int
@@ -20,11 +20,11 @@ type HandlerOptions struct {
 	RetryPolicy            RetryPolicy
 	StartToCloseTimeout    time.Duration
 	ScheduleToCloseTimeout time.Duration
-	terminalErrorHandlerKey string // set internally by WithTerminalErrorHandler; looked up in worker handlers
+	recoveryHandlerKey string // set internally by WithRecoveryHandler; looked up in worker handlers
 }
 
-// WithTerminalErrorHandlerKey returns the handler key for the terminal error handler,
+// RecoveryHandlerKey returns the handler key for the recovery handler,
 // or "" if none is registered.
-func (o HandlerOptions) WithTerminalErrorHandlerKey() string {
-	return o.terminalErrorHandlerKey
+func (o HandlerOptions) RecoveryHandlerKey() string {
+	return o.recoveryHandlerKey
 }

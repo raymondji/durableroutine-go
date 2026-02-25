@@ -77,7 +77,7 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 			err := workflow.ExecuteActivity(activityCtx, ha.RunHandler, activityInput).Get(ctx, &output)
 
 			if err != nil {
-				teKey := wh.lookupTerminalErrorKey(handlerKey)
+				teKey := wh.lookupRecoveryHandlerKey(handlerKey)
 				if teKey != "" {
 					teInput := ActivityInput{
 						HandlerKey: teKey,
@@ -225,7 +225,7 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 					var callOutput ActivityOutput
 					err := workflow.ExecuteActivity(callActivityCtx, ha.RunHandler, callInput).Get(ctx, &callOutput)
 					if err != nil {
-						teKey := wh.lookupTerminalErrorKey(pc.handlerKey)
+						teKey := wh.lookupRecoveryHandlerKey(pc.handlerKey)
 						if teKey != "" {
 							teInput := ActivityInput{
 								HandlerKey: teKey,
@@ -371,13 +371,13 @@ func (wh *workflowHandler) lookupActivityOptions(handlerKey string) workflow.Act
 	return opts
 }
 
-// lookupTerminalErrorKey checks if a terminal error handler is registered.
-func (wh *workflowHandler) lookupTerminalErrorKey(handlerKey string) string {
+// lookupRecoveryHandlerKey checks if a recovery handler is registered.
+func (wh *workflowHandler) lookupRecoveryHandlerKey(handlerKey string) string {
 	entry, ok := wh.reg.entries[handlerKey]
 	if !ok {
 		return ""
 	}
-	teKey := entry.options.WithTerminalErrorHandlerKey()
+	teKey := entry.options.RecoveryHandlerKey()
 	if teKey == "" {
 		return ""
 	}

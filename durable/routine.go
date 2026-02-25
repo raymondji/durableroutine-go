@@ -32,21 +32,21 @@ type SendHandler[Input Payload, ExternalInput Payload, Result Payload] func(ctx 
 // CallHandler handles a synchronous request-response (Update).
 type CallHandler[Input Payload, ExternalReq Payload, ExternalResp Payload, Result Payload] func(ctx *Context, input Input, externalReq ExternalReq) (ExternalResp, *Continuation[Result], error)
 
-// --- Terminal error handler function signatures ---
+// --- Recovery handler function signatures ---
 //
-// Terminal error handlers are invoked only after all retries configured in the
+// Recovery handlers are invoked only after all retries configured in the
 // RetryPolicy are exhausted. They receive the same inputs as the original
 // handler plus the final error, and can compensate, transition to a different
 // state, or fail the routine.
 
-// TerminalErrorHandler handles terminal errors for a Handler.
-type TerminalErrorHandler[Input Payload, Result Payload] func(ctx *Context, input Input, err error) (*Continuation[Result], error)
+// RecoveryHandler handles terminal errors for a Handler.
+type RecoveryHandler[Input Payload, Result Payload] func(ctx *Context, input Input, err error) (*Continuation[Result], error)
 
-// SendTerminalErrorHandler handles terminal errors for a SendHandler.
-type SendTerminalErrorHandler[Input Payload, ExternalInput Payload, Result Payload] func(ctx *Context, input Input, externalInput ExternalInput, err error) (*Continuation[Result], error)
+// SendRecoveryHandler handles terminal errors for a SendHandler.
+type SendRecoveryHandler[Input Payload, ExternalInput Payload, Result Payload] func(ctx *Context, input Input, externalInput ExternalInput, err error) (*Continuation[Result], error)
 
-// CallTerminalErrorHandler handles terminal errors for a CallHandler.
-type CallTerminalErrorHandler[Input Payload, ExternalReq Payload, ExternalResp Payload, Result Payload] func(ctx *Context, input Input, externalReq ExternalReq, err error) (ExternalResp, *Continuation[Result], error)
+// CallRecoveryHandler handles terminal errors for a CallHandler.
+type CallRecoveryHandler[Input Payload, ExternalReq Payload, ExternalResp Payload, Result Payload] func(ctx *Context, input Input, externalReq ExternalReq, err error) (ExternalResp, *Continuation[Result], error)
 
 // --- Runner types ---
 
@@ -98,27 +98,27 @@ func addEntry(w *Worker, key string, handler any, runner HandlerRunner, opts Han
 	w.handlers[key] = handlerEntry{handler: handler, runner: runner, options: opts}
 }
 
-func registerTerminalError(w *Worker, primaryKey string, teHandler any, runner HandlerRunner, opts HandlerOptions) {
+func registerRecoveryHandler(w *Worker, primaryKey string, teHandler any, runner HandlerRunner, opts HandlerOptions) {
 	errorKey := durablecore.ErrorKey(primaryKey)
 	w.handlers[errorKey] = handlerEntry{handler: teHandler, runner: runner, options: opts}
 	entry := w.handlers[primaryKey]
-	entry.options.terminalErrorHandlerKey = errorKey
+	entry.options.recoveryHandlerKey = errorKey
 	w.handlers[primaryKey] = entry
 }
 
-// --- Registration types with WithTerminalErrorHandler builder methods ---
+// --- Registration types with WithRecoveryHandler builder methods ---
 
-// handlerReg is returned by RegisterHandler to allow chaining .WithTerminalErrorHandler().
+// handlerReg is returned by RegisterHandler to allow chaining .WithRecoveryHandler().
 type handlerReg[I Payload, T Payload] struct {
 	w   *Worker
 	key string
 }
 
-// WithTerminalErrorHandler registers a terminal error handler that is invoked only
+// WithRecoveryHandler registers a recovery handler that is invoked only
 // after all retries in the RetryPolicy are exhausted, instead of failing
-// the routine. The terminal error handler must have the same Input and
+// the routine. The recovery handler must have the same Input and
 // Result types as the main handler.
-func (r handlerReg[I, T]) WithTerminalErrorHandler(te TerminalErrorHandler[I, T], opts HandlerOptions) {
+func (r handlerReg[I, T]) WithRecoveryHandler(te RecoveryHandler[I, T], opts HandlerOptions) {
 	runner := func(ctx *Context, rawInput json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
 		var input I
 		if err := json.Unmarshal(rawInput, &input); err != nil {
@@ -130,20 +130,20 @@ func (r handlerReg[I, T]) WithTerminalErrorHandler(te TerminalErrorHandler[I, T]
 		}
 		return buildRunOutput(cont, durablecore.ErrorKey(r.key))
 	}
-	registerTerminalError(r.w, r.key, te, runner, opts)
+	registerRecoveryHandler(r.w, r.key, te, runner, opts)
 }
 
-// sendHandlerReg is returned by RegisterSendHandler to allow chaining .WithTerminalErrorHandler().
+// sendHandlerReg is returned by RegisterSendHandler to allow chaining .WithRecoveryHandler().
 type sendHandlerReg[I Payload, E Payload, T Payload] struct {
 	w   *Worker
 	key string
 }
 
-// WithTerminalErrorHandler registers a terminal error handler that is invoked only
+// WithRecoveryHandler registers a recovery handler that is invoked only
 // after all retries in the RetryPolicy are exhausted, instead of failing
-// the routine. The terminal error handler must have the same Input, ExternalInput,
+// the routine. The recovery handler must have the same Input, ExternalInput,
 // and Result types as the main handler.
-func (r sendHandlerReg[I, E, T]) WithTerminalErrorHandler(te SendTerminalErrorHandler[I, E, T], opts HandlerOptions) {
+func (r sendHandlerReg[I, E, T]) WithRecoveryHandler(te SendRecoveryHandler[I, E, T], opts HandlerOptions) {
 	runner := func(ctx *Context, rawInput json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
 		var input I
 		if err := json.Unmarshal(rawInput, &input); err != nil {
@@ -159,20 +159,20 @@ func (r sendHandlerReg[I, E, T]) WithTerminalErrorHandler(te SendTerminalErrorHa
 		}
 		return buildRunOutput(cont, durablecore.ErrorKey(r.key))
 	}
-	registerTerminalError(r.w, r.key, te, runner, opts)
+	registerRecoveryHandler(r.w, r.key, te, runner, opts)
 }
 
-// callHandlerReg is returned by RegisterCallHandler to allow chaining .WithTerminalErrorHandler().
+// callHandlerReg is returned by RegisterCallHandler to allow chaining .WithRecoveryHandler().
 type callHandlerReg[I Payload, EReq Payload, EResp Payload, T Payload] struct {
 	w   *Worker
 	key string
 }
 
-// WithTerminalErrorHandler registers a terminal error handler that is invoked only
+// WithRecoveryHandler registers a recovery handler that is invoked only
 // after all retries in the RetryPolicy are exhausted, instead of failing
-// the routine. The terminal error handler must have the same Input, ExternalReq,
+// the routine. The recovery handler must have the same Input, ExternalReq,
 // ExternalResp, and Result types as the main handler.
-func (r callHandlerReg[I, EReq, EResp, T]) WithTerminalErrorHandler(te CallTerminalErrorHandler[I, EReq, EResp, T], opts HandlerOptions) {
+func (r callHandlerReg[I, EReq, EResp, T]) WithRecoveryHandler(te CallRecoveryHandler[I, EReq, EResp, T], opts HandlerOptions) {
 	runner := func(ctx *Context, rawInput json.RawMessage, rawMsg json.RawMessage, errStr string) (*RunOutput, error) {
 		var input I
 		if err := json.Unmarshal(rawInput, &input); err != nil {
@@ -197,7 +197,7 @@ func (r callHandlerReg[I, EReq, EResp, T]) WithTerminalErrorHandler(te CallTermi
 		out.CallResponse = respBytes
 		return out, nil
 	}
-	registerTerminalError(r.w, r.key, te, runner, opts)
+	registerRecoveryHandler(r.w, r.key, te, runner, opts)
 }
 
 // --- Register* registration functions ---
@@ -206,8 +206,8 @@ func (r callHandlerReg[I, EReq, EResp, T]) WithTerminalErrorHandler(te CallTermi
 // Any Handler can serve as a routine entry point (via Go) or as a
 // continuation target (via After, Continue, Default).
 // HandlerOptions configures retry behavior for the handler.
-// Chain .WithTerminalErrorHandler() on the returned registration to register a terminal
-// error handler — it is invoked only after all retries are exhausted, instead
+// Chain .WithRecoveryHandler() on the returned registration to register a recovery
+// handler — it is invoked only after all retries are exhausted, instead
 // of failing the routine.
 func RegisterHandler[I Payload, T Payload](w *Worker, h Handler[I, T], opts HandlerOptions) handlerReg[I, T] {
 	var zeroI I
@@ -230,8 +230,8 @@ func RegisterHandler[I Payload, T Payload](w *Worker, h Handler[I, T], opts Hand
 
 // RegisterSendHandler registers a SendHandler keyed by input DurableKind, message DurableKind, and result DurableKind.
 // HandlerOptions configures retry behavior for the handler.
-// Chain .WithTerminalErrorHandler() on the returned registration to register a terminal
-// error handler — it is invoked only after all retries are exhausted, instead
+// Chain .WithRecoveryHandler() on the returned registration to register a recovery
+// handler — it is invoked only after all retries are exhausted, instead
 // of failing the routine.
 func RegisterSendHandler[I Payload, E Payload, T Payload](w *Worker, h SendHandler[I, E, T], opts HandlerOptions) sendHandlerReg[I, E, T] {
 	var zeroI I
@@ -260,8 +260,8 @@ func RegisterSendHandler[I Payload, E Payload, T Payload](w *Worker, h SendHandl
 // RegisterCallHandler registers a CallHandler keyed by input DurableKind, request DurableKind,
 // response DurableKind, and result DurableKind.
 // HandlerOptions configures retry behavior for the handler.
-// Chain .WithTerminalErrorHandler() on the returned registration to register a terminal
-// error handler — it is invoked only after all retries are exhausted, instead
+// Chain .WithRecoveryHandler() on the returned registration to register a recovery
+// handler — it is invoked only after all retries are exhausted, instead
 // of failing the routine.
 func RegisterCallHandler[I Payload, EReq Payload, EResp Payload, T Payload](w *Worker, h CallHandler[I, EReq, EResp, T], opts HandlerOptions) callHandlerReg[I, EReq, EResp, T] {
 	var zeroI I

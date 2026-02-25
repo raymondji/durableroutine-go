@@ -119,7 +119,7 @@ func StateroutineWorkflow(ctx workflow.Context, input WorkflowInput) (any, error
         err := workflow.ExecuteActivity(ctx, RunHandler, activityInput).Get(ctx, &output)
 
         if err != nil {
-            if teKey := lookupTerminalErrorKey(handlerKey); teKey != "" {
+            if teKey := lookupRecoveryHandlerKey(handlerKey); teKey != "" {
                 teInput := ActivityInput{
                     HandlerKey:     teKey,
                     StateroutineID: activityInput.StateroutineID,
@@ -366,7 +366,7 @@ type ActivityInput struct {
     StateroutineID string
     State          any    // serialized handler state
     Message        any    // for SendFunc/CallFunc handlers (nil for HandlerFunc)
-    Error          string // for terminal error handlers (empty otherwise)
+    Error          string // for recovery handlers (empty otherwise)
 }
 
 type ActivityOutput struct {
@@ -480,7 +480,7 @@ For `ClientSend`, signals arrive via `client.SignalWorkflow`. For `Send` (stater
 
 ## Error Handling
 
-- **Handler errors**: Activities are retried according to the `RetryPolicy` in `HandlerOptions`. After all retries are exhausted, the workflow checks for a terminal error handler registered under `"error:" + handlerKey`.
-- **Terminal error handlers**: Run as a separate activity. If the terminal error handler also fails, the workflow fails.
-- **Workflow errors**: If no terminal error handler is registered and retries are exhausted, the workflow fails with the activity error.
-- **Call handler errors**: If a call handler activity fails, the error is sent back to the Update handler's response channel. The Update handler returns the error to the client. The workflow does not transition state — it re-enters the select loop with the same cases. If retries are exhausted and a terminal error handler is registered, it runs and must return a valid `Continuation` (along with the error response to the caller).
+- **Handler errors**: Activities are retried according to the `RetryPolicy` in `HandlerOptions`. After all retries are exhausted, the workflow checks for a recovery handler registered under `"error:" + handlerKey`.
+- **Recovery handlers**: Run as a separate activity. If the recovery handler also fails, the workflow fails.
+- **Workflow errors**: If no recovery handler is registered and retries are exhausted, the workflow fails with the activity error.
+- **Call handler errors**: If a call handler activity fails, the error is sent back to the Update handler's response channel. The Update handler returns the error to the client. The workflow does not transition state — it re-enters the select loop with the same cases. If retries are exhausted and a recovery handler is registered, it runs and must return a valid `Continuation` (along with the error response to the caller).

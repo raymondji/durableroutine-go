@@ -60,7 +60,7 @@ func main() {
         durable.RegisterCallHandler(w, svc.CancelBooking, durable.HandlerOptions{})
         durable.RegisterSendHandler(w, svc.ProcessPayment, durable.HandlerOptions{
             RetryPolicy: durable.RetryPolicy{MaxAttempts: 3},
-        }).WithTerminalErrorHandler(svc.PaymentFailed, durable.HandlerOptions{})
+        }).WithRecoveryHandler(svc.PaymentFailed, durable.HandlerOptions{})
         w.Start()
     }
 
@@ -105,7 +105,7 @@ Follow the [Quick Start](docs/tutorials/QUICK_START.md) to build your first dura
 | [`auction`](docs/howto/auction/auction.go) | Synchronous bidding with live status queries |
 | [`fanout`](docs/howto/fanout/fanout.go) | Fan-out/fan-in with child routines |
 | [`pipeline`](docs/howto/pipeline/pipeline.go) | Producer-consumer pipeline |
-| [`saga`](docs/howto/saga/saga.go) | SAGA compensation with terminal error handlers |
+| [`saga`](docs/howto/saga/saga.go) | SAGA compensation with recovery handlers |
 | [`batch`](docs/howto/batch/batch.go) | Chunked batch processing with cancellation |
 
 ## Comparison

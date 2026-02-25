@@ -118,6 +118,6 @@ func TestAuctionNoBids(t *testing.T) {
 	})
 }
 
-func TestAuctionBidTerminalError(t *testing.T) {
+func TestAuctionBidRecoveryHandler(t *testing.T) {
 	t.Skip("needs injectable failure in PlaceBid")
 }

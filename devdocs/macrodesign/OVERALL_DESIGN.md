@@ -99,24 +99,24 @@ The API is defined in the [`durable/`](durable/) package:
 
 - **`RetryPolicy`** — configures retry behavior (max attempts, intervals, backoff, timeouts).
 - **`HandlerOptions`** — required parameter on all `Register*` registration functions. Contains a `RetryPolicy` field. Use `HandlerOptions{}` for Temporal defaults.
-- **Terminal error handlers** — registered via the `.WithTerminalErrorHandler()` builder method on the registration returned by each `Register*` function. This enforces at most one terminal error handler at compile time. Invoked only after all retries in the RetryPolicy are exhausted, instead of failing the routine.
+- **Recovery handlers** — registered via the `.WithRecoveryHandler()` builder method on the registration returned by each `Register*` function. This enforces at most one recovery handler at compile time. Invoked only after all retries in the RetryPolicy are exhausted, instead of failing the routine.
 
-Terminal error handlers share the same generic type parameters as the main handler, so Go enforces type safety at compile time:
-- A `TerminalErrorHandler[I, T]` chained on `RegisterHandler` must match the handler's `I` and `T`.
-- A `SendTerminalErrorHandler[I, E, T]` chained on `RegisterSendHandler` must match the handler's `I`, `E`, and `T`.
-- A `CallTerminalErrorHandler[I, Req, Resp, T]` chained on `RegisterCallHandler` must match the handler's `I`, `Req`, `Resp`, and `T`.
+Recovery handlers share the same generic type parameters as the main handler, so Go enforces type safety at compile time:
+- A `RecoveryHandler[I, T]` chained on `RegisterHandler` must match the handler's `I` and `T`.
+- A `SendRecoveryHandler[I, E, T]` chained on `RegisterSendHandler` must match the handler's `I`, `E`, and `T`.
+- A `CallRecoveryHandler[I, Req, Resp, T]` chained on `RegisterCallHandler` must match the handler's `I`, `Req`, `Resp`, and `T`.
 
-Passing the wrong kind of terminal error handler (e.g., a `SendTerminalErrorHandler` to `RegisterHandler`'s `.WithTerminalErrorHandler()`) is a compile-time error because the function signatures are incompatible.
+Passing the wrong kind of recovery handler (e.g., a `SendRecoveryHandler` to `RegisterHandler`'s `.WithRecoveryHandler()`) is a compile-time error because the function signatures are incompatible.
 
 Retry policies are set at handler registration level only, not on individual continuation cases.
 
 #### Handler Registration
 
-Because Go does not allow type parameters on methods, these are package-level functions that take `*Worker`. All require `HandlerOptions` and return a typed registration struct with an `WithTerminalErrorHandler` method:
+Because Go does not allow type parameters on methods, these are package-level functions that take `*Worker`. All require `HandlerOptions` and return a typed registration struct with an `WithRecoveryHandler` method:
 
-- **`RegisterHandler[I, T](w, handler, opts) handlerReg[I, T]`** — registers a Handler keyed by `handler:{input.DurableKind()}:{result.DurableKind()}`. Any handler registered this way can serve as both a routine entry point (via `Go`) and a continuation target (via `ContinueAfter`, `Continue`, `Default`, `After`). Chain `.WithTerminalErrorHandler(te)` to register a terminal error handler.
-- **`RegisterSendHandler[I, E, T](w, handler, opts) sendHandlerReg[I, E, T]`** — registers a SendHandler keyed by `send:{input.DurableKind()}:{externalInput.DurableKind()}:{result.DurableKind()}`. Chain `.WithTerminalErrorHandler(te)` to register a terminal error handler.
-- **`RegisterCallHandler[I, Req, Resp, T](w, handler, opts) callHandlerReg[I, Req, Resp, T]`** — registers a CallHandler keyed by `call:{input.DurableKind()}:{externalReq.DurableKind()}:{externalResp.DurableKind()}:{result.DurableKind()}`. Chain `.WithTerminalErrorHandler(te)` to register a terminal error handler.
+- **`RegisterHandler[I, T](w, handler, opts) handlerReg[I, T]`** — registers a Handler keyed by `handler:{input.DurableKind()}:{result.DurableKind()}`. Any handler registered this way can serve as both a routine entry point (via `Go`) and a continuation target (via `ContinueAfter`, `Continue`, `Default`, `After`). Chain `.WithRecoveryHandler(te)` to register a recovery handler.
+- **`RegisterSendHandler[I, E, T](w, handler, opts) sendHandlerReg[I, E, T]`** — registers a SendHandler keyed by `send:{input.DurableKind()}:{externalInput.DurableKind()}:{result.DurableKind()}`. Chain `.WithRecoveryHandler(te)` to register a recovery handler.
+- **`RegisterCallHandler[I, Req, Resp, T](w, handler, opts) callHandlerReg[I, Req, Resp, T]`** — registers a CallHandler keyed by `call:{input.DurableKind()}:{externalReq.DurableKind()}:{externalResp.DurableKind()}:{result.DurableKind()}`. Chain `.WithRecoveryHandler(te)` to register a recovery handler.
 
 #### Handler Signatures
 
@@ -126,13 +126,13 @@ All generic type params (`Input`, `ExternalInput`, `ExternalReq`, `ExternalResp`
 - **`SendHandler[Input, ExternalInput, Result]`** — `func(ctx *Context, input Input, externalInput ExternalInput) (*Continuation[Result], error)`
 - **`CallHandler[Input, ExternalReq, ExternalResp, Result]`** — `func(ctx *Context, input Input, externalReq ExternalReq) (ExternalResp, *Continuation[Result], error)`
 
-#### Terminal Error Handler Signatures
+#### Recovery Handler Signatures
 
-Terminal error handlers are invoked only after all retries configured in the RetryPolicy are exhausted, instead of failing the routine. They receive the same inputs as the original handler plus the final error:
+Recovery handlers are invoked only after all retries configured in the RetryPolicy are exhausted, instead of failing the routine. They receive the same inputs as the original handler plus the final error:
 
-- **`TerminalErrorHandler[Input, Result]`** — `func(ctx *Context, input Input, err error) (*Continuation[Result], error)`
-- **`SendTerminalErrorHandler[Input, ExternalInput, Result]`** — `func(ctx *Context, input Input, externalInput ExternalInput, err error) (*Continuation[Result], error)`
-- **`CallTerminalErrorHandler[Input, ExternalReq, ExternalResp, Result]`** — `func(ctx *Context, input Input, externalReq ExternalReq, err error) (ExternalResp, *Continuation[Result], error)`
+- **`RecoveryHandler[Input, Result]`** — `func(ctx *Context, input Input, err error) (*Continuation[Result], error)`
+- **`SendRecoveryHandler[Input, ExternalInput, Result]`** — `func(ctx *Context, input Input, externalInput ExternalInput, err error) (*Continuation[Result], error)`
+- **`CallRecoveryHandler[Input, ExternalReq, ExternalResp, Result]`** — `func(ctx *Context, input Input, externalReq ExternalReq, err error) (ExternalResp, *Continuation[Result], error)`
 
 #### Continuation and Constructors
 
@@ -174,11 +174,11 @@ See the [`docs/howto/`](docs/howto/) directory:
 
 - **[`docs/howto/reminder/`](docs/howto/reminder/reminder.go)** — Timer chain with per-handler state. Demonstrates `ContinueAfter` for simple timer-based progression.
 - **[`docs/howto/order/`](docs/howto/order/order.go)** — Order lifecycle with Send + timer + Query. Demonstrates `ReceiveSend`, `SetQueryResult`, `After`, and `Select`.
-- **[`docs/howto/booking/`](docs/howto/booking/booking.go)** — Multi-step client-driven routine with Send + Call + Query. Client sends payment/shipping info via `Send`, can cancel via `Call`, and check status via `Query`. Demonstrates `ReceiveSendTerminalError` to release the reservation if payment fails after all retries.
-- **[`docs/howto/auction/`](docs/howto/auction/auction.go)** — Auction with synchronous bidding via `Call`. Bidders place bids and immediately learn whether they were accepted or outbid. Demonstrates `ReceiveCall` for request-response that advances state, `SetQueryResult` for live status, `After` for auction close, and `ReceiveCallTerminalError` to return an error response to the blocked caller without crashing the auction.
+- **[`docs/howto/booking/`](docs/howto/booking/booking.go)** — Multi-step client-driven routine with Send + Call + Query. Client sends payment/shipping info via `Send`, can cancel via `Call`, and check status via `Query`. Demonstrates `SendRecoveryHandler` to release the reservation if payment fails after all retries.
+- **[`docs/howto/auction/`](docs/howto/auction/auction.go)** — Auction with synchronous bidding via `Call`. Bidders place bids and immediately learn whether they were accepted or outbid. Demonstrates `ReceiveCall` for request-response that advances state, `SetQueryResult` for live status, `After` for auction close, and `CallRecoveryHandler` to return an error response to the blocked caller without crashing the auction.
 - **[`docs/howto/fanout/`](docs/howto/fanout/fanout.go)** — Fan-out/fan-in using child routines and routine-to-routine BufferSend. Parent starts children via `BufferStart`, children send results back via `durable.BufferSend`. Parent collects via `ReceiveSend`.
 - **[`docs/howto/pipeline/`](docs/howto/pipeline/pipeline.go)** — Producer-consumer pipeline. Producer sends items to consumer via `durable.BufferSend`. Consumer processes items one at a time via `ReceiveSend`.
-- **[`docs/howto/saga/`](docs/howto/saga/saga.go)** — SAGA compensation pattern with terminal error handlers. Sequential service calls with compensation via `WithTerminalErrorHandler` — when all retries are exhausted, the terminal error handler runs compensation logic instead of failing the routine.
+- **[`docs/howto/saga/`](docs/howto/saga/saga.go)** — SAGA compensation pattern with recovery handlers. Sequential service calls with compensation via `WithRecoveryHandler` — when all retries are exhausted, the recovery handler runs compensation logic instead of failing the routine.
 - **[`docs/howto/batch/`](docs/howto/batch/batch.go)** — Chunked batch processing with cancellation. Processes a large dataset in chunks using `Select` + `Default`, checking for a cancel signal between chunks. Like a GenServer that checks its mailbox between batches.
 
 ### How Common Patterns Map
@@ -189,7 +189,7 @@ See the [`docs/howto/`](docs/howto/) directory:
 | **Wait for one of several events** | Handler returns `Select(ReceiveSend(...), ReceiveCall(...), After(...))`. The runtime sets up a Temporal selector. Query results are registered separately via `SetQueryResult`. See [`docs/howto/order/`](docs/howto/order/order.go). |
 | **Fan-out / fan-in** | Parent starts children via `BufferStart(ctx, id, handler, input)`. Each child calls `durable.BufferSend(ctx, parentID, handler, result)` to send results back. Parent collects via `ReceiveSend`, one at a time. See [`docs/howto/fanout/`](docs/howto/fanout/fanout.go). |
 | **Producer-consumer** | Producer calls `durable.BufferSend` in a loop to send items. Consumer uses `Select(ReceiveSend(receiveItem, input), ReceiveSend(receiveDone, input))` to process items and detect completion. See [`docs/howto/pipeline/`](docs/howto/pipeline/pipeline.go). |
-| **SAGA compensation** | Register terminal error handlers via `WithTerminalErrorHandler` that run compensation logic when retries are exhausted. See [`docs/howto/saga/`](docs/howto/saga/saga.go). |
+| **SAGA compensation** | Register recovery handlers via `WithRecoveryHandler` that run compensation logic when retries are exhausted. See [`docs/howto/saga/`](docs/howto/saga/saga.go). |
 | **Checkpoint and continue** | Handler does expensive work, returns `Continue(nextHandler, input)`. The runtime checkpoints input (continue-as-new boundary) and immediately invokes the next handler without waiting. |
 | **Cancellable batch processing** | Process items in chunks. Between chunks, return `Select(ReceiveSend(cancelHandler, input), Default(nextChunkHandler, input))`. If a cancel signal is pending it fires; otherwise Default continues to the next chunk. See [`docs/howto/batch/`](docs/howto/batch/batch.go). |
 | **Drain buffered signals** | Handler returns `Select(ReceiveSend(handler, input), Default(doneHandler, input))`. Processes pending signals one at a time; when none are buffered, the default case fires. |
@@ -209,9 +209,9 @@ RoutineWorkflow(ctx, routineID):
         // Run the handler as an activity
         cont, err = executeActivity(handler, input)
         if err != nil:
-            // Check if a terminal error handler is registered
-            if handler has WithTerminalErrorHandlerKey:
-                errorHandler = lookup(WithTerminalErrorHandlerKey)
+            // Check if a recovery handler is registered
+            if handler has RecoveryHandlerKey:
+                errorHandler = lookup(RecoveryHandlerKey)
                 cont, err = executeActivity(errorHandler, input, err)
                 if err != nil: fail workflow
             else:
@@ -277,7 +277,7 @@ Key implementation details:
 - **Signal → ReceiveSend**: buffered Temporal signals dispatched to the matching inbox handler
 - **Update → ReceiveCall**: Temporal update handler runs the call handler as an activity, returns response
 - **Query → SetQueryResult**: Temporal query handler runs synchronously in workflow context (read-only), returning the stored static value. Registered via `SetQueryResult` on Context, persists across state transitions until overridden.
-- **Terminal error handlers** — registered under `error:{originalKey}` in the worker map. When all retries are exhausted, the runtime invokes the terminal error handler instead of failing the routine.
+- **Recovery handlers** — registered under `error:{originalKey}` in the worker map. When all retries are exhausted, the runtime invokes the recovery handler instead of failing the routine.
 
 #### Automatic Continue-As-New
 
@@ -300,7 +300,7 @@ Because the workflow is a simple loop (run activity → interpret continuation �
 - Call/Send/Query maps cleanly to Temporal's Update/Signal/Query primitives
 - Uniform handler model — no distinction between "routine entry point" and "continuation handler". Any `Handler` registered with `RegisterHandler` can serve as either.
 - River-style registration: input types self-identify via `DurableKind()`, handlers registered at startup
-- Terminal error handlers enable compensation patterns (SAGA) — instead of failing the routine when retries are exhausted, transition to a terminal error handler that can compensate and continue
+- Recovery handlers enable compensation patterns (SAGA) — instead of failing the routine when retries are exhausted, transition to a recovery handler that can compensate and continue
 
 **Disadvantages:**
 - No linear top-to-bottom code for multi-step sequences — each step is a separate handler function connected via `ContinueAfter`. This is more verbose than `sleep(); doNext()` but eliminates the checkpointing problem entirely.
@@ -332,7 +332,7 @@ Durable routine draws from several systems. This section maps concepts across th
 | **Start child** | `BufferStart` | Child Workflow | `DynamicSupervisor.start_child` | `go func()` |
 | **Sleep/timer** | `ContinueAfter` / `After` | `workflow.Sleep` / Timer | `Process.send_after` + `handle_info` | `time.After` |
 | **State machine** | Handler returns `Continuation` | Workflow code + signals | `handle_cast` / `handle_call` returns `{:noreply, new_state}` | Manual with select |
-| **Retry + compensation** | `WithTerminalErrorHandler` / `RetryPolicy` | Activity retry policy | Supervisor restart strategy | Manual |
+| **Retry + compensation** | `WithRecoveryHandler` / `RetryPolicy` | Activity retry policy | Supervisor restart strategy | Manual |
 | **Durability** | Temporal (automatic) | Event history replay | (not durable by default) | (not durable) |
 | **Continue-as-new** | Automatic (library-managed) | Manual `workflow.NewContinueAsNewError` | (not needed) | (not applicable) |
 
@@ -340,7 +340,7 @@ Durable routine draws from several systems. This section maps concepts across th
 
 ## Open Questions
 
-1. ~~**Error handling and retries**: Handlers run as activities, so Temporal's activity retry policy applies. How should we expose retry configuration?~~ **Resolved**: `HandlerOptions` (containing a `RetryPolicy`) is a required parameter on all `Register*` registration functions. Terminal error handlers are registered via the `.WithTerminalErrorHandler()` builder method on the returned registration, sharing the same generic type parameters as the main handler for compile-time type safety. They are invoked only after all retries are exhausted. Retry policies are set at handler registration level only, not on individual continuation cases.
+1. ~~**Error handling and retries**: Handlers run as activities, so Temporal's activity retry policy applies. How should we expose retry configuration?~~ **Resolved**: `HandlerOptions` (containing a `RetryPolicy`) is a required parameter on all `Register*` registration functions. Recovery handlers are registered via the `.WithRecoveryHandler()` builder method on the returned registration, sharing the same generic type parameters as the main handler for compile-time type safety. They are invoked only after all retries are exhausted. Retry policies are set at handler registration level only, not on individual continuation cases.
 2. **State size limits**: Temporal has payload size limits (~2MB default). Large state may need external storage.
 3. **Testing**: Should support a local/in-memory mode for unit testing without a Temporal server.
 4. **Observability**: How do we expose Temporal's native visibility (search attributes, workflow status) through the abstraction?

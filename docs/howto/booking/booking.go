@@ -3,8 +3,8 @@
 // with struct-based dependency injection.
 // Per-step state: BookingInput -> ReservedInput -> PaidInput.
 //
-// Also demonstrates ReceiveSendTerminalError: if payment processing fails after
-// all retries, the terminal error handler releases the reservation instead
+// Also demonstrates SendRecoveryHandler: if payment processing fails after
+// all retries, the recovery handler releases the reservation instead
 // of failing the entire routine.
 package booking
 
@@ -126,7 +126,7 @@ func (s *BookingService) ProcessPayment(ctx *durable.Context, input ReservedInpu
 	), nil
 }
 
-// PaymentFailed is the terminal error handler for ProcessPayment. If the
+// PaymentFailed is the recovery handler for ProcessPayment. If the
 // payment gateway is unreachable after all retries, release the reservation
 // so the item goes back into inventory.
 func (s *BookingService) PaymentFailed(ctx *durable.Context, input ReservedInput, externalInput PaymentInfo, err error) (*durable.Continuation[BookingResult], error) {
@@ -163,7 +163,7 @@ func RegisterHandlers(w *durable.Worker, svc *BookingService) {
 	})
 	durable.RegisterSendHandler(w, svc.ProcessPayment, durable.HandlerOptions{
 		RetryPolicy: durable.RetryPolicy{MaxAttempts: 3},
-	}).WithTerminalErrorHandler(svc.PaymentFailed, durable.HandlerOptions{})
+	}).WithRecoveryHandler(svc.PaymentFailed, durable.HandlerOptions{})
 	durable.RegisterSendHandler(w, svc.ProcessShipping, durable.HandlerOptions{
 		RetryPolicy: durable.RetryPolicy{MaxAttempts: 3},
 	})

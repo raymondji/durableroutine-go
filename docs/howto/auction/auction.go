@@ -3,8 +3,8 @@
 // was accepted or outbid. The auction runs until a timer expires, then
 // completes with the winning bid. Current status is available via ClientQuery.
 //
-// Also demonstrates ReceiveCallTerminalError: if bid processing fails after all
-// retries, the terminal error handler returns an error response to the blocked
+// Also demonstrates CallRecoveryHandler: if bid processing fails after all
+// retries, the recovery handler returns an error response to the blocked
 // caller instead of failing the entire routine.
 package auction
 
@@ -170,6 +170,6 @@ func RegisterHandlers(w *durable.Worker, svc *AuctionService) {
 	durable.RegisterHandler(w, svc.OpenAuction, durable.HandlerOptions{})
 	durable.RegisterCallHandler(w, svc.PlaceBid, durable.HandlerOptions{
 		RetryPolicy: durable.RetryPolicy{MaxAttempts: 3},
-	}).WithTerminalErrorHandler(svc.BidFailed, durable.HandlerOptions{})
+	}).WithRecoveryHandler(svc.BidFailed, durable.HandlerOptions{})
 	durable.RegisterHandler(w, svc.CloseAuction, durable.HandlerOptions{})
 }
