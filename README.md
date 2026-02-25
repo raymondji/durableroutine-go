@@ -6,7 +6,9 @@
 
 - **Bottom-up view:** Like native goroutines and channels, but durable and distributed.
 
-- **Top-down view:** Most of Temporal's power, minus the pain of replay-safety and continue-as-new 
+- **Top-down view:** Most of Temporal's power, minus the pain of replay-safety and continue-as-new
+
+For more on the pitfalls of replay-based durable execution that this library avoids, see Chris Gillum's (Microsoft, Azure Functions) [Common Pitfalls with Durable Execution Frameworks](https://blog.cgillum.tech/common-pitfalls-with-durable-execution-frameworks-like-durable-functions-or-temporal-eaf635d4a8bb) (determinism constraints, versioning, history log sizes, continue-as-new) and Long Quanzheng's (Indeed, creator of iWF) [Durable Execution is NOT the Only Way](https://medium.com/@qlong/workflow-should-be-code-but-durable-execution-is-not-the-only-way-519f7682360c) (paradigm shift, cooperative threading model, unit testing difficulty, operational overhead).
 
 ## Show me some code
 
