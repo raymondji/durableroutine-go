@@ -547,12 +547,53 @@ Initial intuition: "BookFlight only needs FlightID and returns FlightConfirmatio
 
 Chain's state-reduction benefit is real only for sub-chains that don't participate in compensation — like the identity verification example, where each handler's output is genuinely minimal.
 
+### Does composability justify Chain?
+
+The main argument for Chain is reusability: write a sub-chain once (e.g., identity verification), reuse it across routines with different result types. But this requires routines to share handler types (`VerifiedIdentity` as both verification's output and consumers' input). How much coupling does that actually create?
+
+**Type evolution — when does sharing hurt?**
+
+- **Adding fields:** no impact — consumers ignore fields they don't read. This is the most common kind of evolution.
+- **Removing/renaming fields consumers depend on, or changing field types:** breaks consumers. But these changes are rare, intentional, caught at compile time, and would require corresponding changes to duplicated logic too.
+
+**The gRPC principle doesn't transfer cleanly:**
+
+- gRPC's "own types per RPC" exists for external APIs with different clients on different upgrade cycles and protobuf wire-format constraints.
+- Handlers in the same Go binary are internal, compiled together, and upgrade atomically. The compiler enforces consistency for shared types — that's a feature, not a bug.
+
+**Duplication has its own coupling cost:**
+
+- Without Chain, duplicated verification logic must be kept in sync. Bug fixes and new requirements must be applied to every copy. Copies can drift silently with no compiler enforcement.
+
+**The real concern — behavioral divergence:**
+
+- The meaningful risk isn't type evolution but behavioral divergence: what if `AccountCreation` wants MFA but `PasswordReset` wants SMS-only?
+- With a shared chain, you'd need to parameterize or fork. Without Chain, each routine already has its own flow.
+- But this is the standard share-vs-duplicate tradeoff for any shared code. Chain doesn't change the calculus — it just makes sharing *possible* for flows that cross suspension points.
+
+### Updated summary table
+
+| Claimed benefit | Holds up? |
+|---|---|
+| Readability (pipeline in one place) | Marginal — Continue already reads clearly |
+| Composability (reusable sub-chains) | Mixed — type coupling is weak (additive changes are safe, breaking changes are caught at compile time), but behavioral divergence between consumers is a real tradeoff |
+| Less state per handler | No — for sagas with compensation, state accumulation is the same |
+
 ## Decision
 
-**Chain + TerminalError.** RecoveryHandler stays. The total API addition is:
+**TerminalError: yes. Chain: not yet.** The independent-evolution argument against Chain is weaker than initially assessed — type coupling in a single Go binary is largely a non-issue (additive changes are safe, breaking changes are compile-time errors). The real concern is behavioral divergence between consumers, which is the standard share-vs-duplicate tradeoff for any shared code.
+
+Chain's composability benefit holds up better than first assessed: it makes sharing possible for flows that cross suspension points, something regular helper functions can't do. The readability benefit remains marginal (Continue already reads clearly), and state reduction doesn't materialize for sagas with compensation.
+
+Whether to add Chain depends more on whether the complexity is justified by the frequency of reusable sub-chains with suspension points in practice — not on independent evolution.
+
+TerminalError stands on its own merits regardless of Chain. It maps directly to a real Temporal concept (`NonRetryableApplicationError`), gives developers explicit control over retry behavior, and composes cleanly with RecoveryHandler.
+
+The API addition is:
 
 ```go
-func Chain[T, U Payload](inner *Continuation[T], handler Handler[T, U]) *Continuation[U]
 func TerminalError(err error) error
 func IsTerminal(err error) bool
 ```
+
+Chain remains a documented design, ready to add if reusable sub-chains with suspension points prove to be a common pattern.
