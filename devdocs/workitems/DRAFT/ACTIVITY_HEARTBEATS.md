@@ -1,0 +1,1 @@
+Long-running handlers can't report progress or detect cancellation mid-execution. Would need to plumb heartbeat capability through `durable.Context`.

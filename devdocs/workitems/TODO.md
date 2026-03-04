@@ -2,36 +2,6 @@
 
 These are ready for Claude to work on.
 
-## Write top-level README.md for the repo
-
-In particular, give a good pitch for the repo. Mention two ways to think about this:
-1. Bottom up: Take native goroutines and channels, but add durability and distribued computing
-2. Top down: Most of the Temporal goodness, but remove the burden of managing replay safety and continue-as-new
-
-## Acknowledge inspiration from continuation-passing-style
-
-## Acknowledge inspiration from indeed workflow framework and add comparison
-
-https://github.com/indeedeng/iwf
-
-# Draft TODOs
-
-These are not ready for Claude to work on yet.
-
-## Consider making SetQueryResult a way to set a KV-store
-
-## Cancel signals/timeouts
-
-E.g. if you want to race a signal to do something and a cancellation timeout. 
-
-If the timeout happens, we need to cancel the signal (or clear the queued up signals?) so that later on the signal does not get "reused". How do make sure we consume the signal and not just let it sit in the queue?
-
-If the signal happens, we need to make sure we clear the timer. (I think this may happen already, since I don't think we queue up timers the same way we queue up signals).
-
-## Activity heartbeats
-
-Long-running handlers can't report progress or detect cancellation mid-execution. Would need to plumb heartbeat capability through `durable.Context`.
-
 ## Search attributes
 
 No way to tag routines with custom searchable metadata. Currently must use external indexing. Could expose via `HandlerOptions` or `Go()` options.
