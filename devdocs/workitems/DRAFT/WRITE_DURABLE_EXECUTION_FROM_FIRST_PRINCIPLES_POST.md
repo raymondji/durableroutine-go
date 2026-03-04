@@ -19,9 +19,14 @@ Show the evolution: start with the simplest possible model, find where the holes
 Try to separate inherent/unavoidable complexity and optional/avoidable complexity.
 - This isn't to say that the optional complexity serves no purpose. It can be used to solve a problem, there just might be other ways to solve that problem with different tradeoffs.
 
+Why do you actually want message passing? Why not just have persist the result somewhere, then have another RPC handler kickoff the next durable execution thread?
+1. You have to serialize the state and store it somewhere else
+2. It's not as easy to read the entire progression in one place. It's scattered across RPC handlers, cron jobs, message queue handlers, etc.
+3. Timers. You would need a separate message queue/etc. to manager timers for cancellation. I think this is a simple example that works well here - show what it looks like with durable execution + message passing, vs. REST API + cron job + message queue.
+
 Problems with Temporal's model:
 - Replay safety of workflow code
-- Continue as new
+- Continue as new (for long running workflows, you still have to be able to serialize the whole state! Why not just do this from the get go)
 - Confusing concurrency model (temporal go sdk uses cooperative multithreading within a workflow, which A) feels at odds with Go's goroutine concurrency model b/c you often don't need to use mutexes/etc where you think you should AND B) does still require that you use synchronization primitives some of the time. hard to tell which)
 
 Stackful vs stackless programming
