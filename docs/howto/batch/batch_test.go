@@ -27,7 +27,7 @@ func TestBatchCompleteAll(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 
-		h, err := durable.Go(env.Client, ctx, env.UniqueID("batch-all"), svc.StartBatch, batch.BatchState{
+		h, err := durable.Go(env.Client, ctx, env.UniqueID("batch-all"), svc.StartBatch, batch.BatchInput{
 			Items: makeItems(350),
 		})
 		if err != nil {
@@ -60,11 +60,11 @@ func TestBatchCancelMidBatch(t *testing.T) {
 		// Use enough items so the batch takes a while (especially with
 		// Temporal activity overhead per chunk), giving us time to send a
 		// cancel signal. Keep it under Temporal's 2 MB payload limit —
-		// ProcessingState carries the full items slice through each
+		// ProcessingInput carries the full items slice through each
 		// continuation. 50k items ≈ 1.3 MB serialized (2 cases).
 		const numItems = 50000
 		id := env.UniqueID("batch-cancel")
-		h, err := durable.Go(env.Client, ctx, id, svc.StartBatch, batch.BatchState{
+		h, err := durable.Go(env.Client, ctx, id, svc.StartBatch, batch.BatchInput{
 			Items: makeItems(numItems),
 		})
 		if err != nil {

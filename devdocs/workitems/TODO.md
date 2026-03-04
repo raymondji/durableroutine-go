@@ -2,21 +2,49 @@
 
 These are ready for Claude to work on.
 
-## Write top-level README.md for the repo
+## Search attributes
 
-In particular, give a good pitch for the repo. Mention two ways to think about this:
-1. Bottom up: Take native goroutines and channels, but add durability and distribued computing
-2. Top down: Most of the Temporal goodness, but remove the burden of managing replay safety and continue-as-new
+No way to tag routines with custom searchable metadata. Currently must use external indexing. Could expose via `HandlerOptions` or `Go()` options.
 
-## Acknowledge inspiration from continuation-passing-style
+## Workflow cancellation
 
-## Acknowledge inspiration from indeed workflow framework and add comparison
+No `Cancel()` API. Currently must simulate via signals + handler cooperation. Could add `durable.Cancel(client, ctx, id)` that maps to Temporal's workflow cancellation.
 
-https://github.com/indeedeng/iwf
+## Workflow execution timeouts
 
-# Draft TODOs
+Routines run indefinitely until `Done()`. No way to set an overall deadline. Could expose via `Go()` options.
 
-These are not ready for Claude to work on yet.
+## Cron / Schedules
+
+No periodic execution support. Need external scheduler. Could integrate with Temporal's Schedule feature.
+
+## Interceptors
+
+Can't hook into workflow/activity lifecycle for observability, auth, etc.
+
+## Memos / metadata
+
+Can't attach arbitrary metadata to workflow executions.
+
+## Custom data converters
+
+JSON only. Can't use protobuf or custom serialization.
+
+## Local activities
+
+All activities are regular Temporal activities (full scheduling overhead). Could expose for lightweight handlers.
+
+## Workflow ID reuse policy configuration
+
+Hardcoded to `ALLOW_DUPLICATE_FAILED_ONLY`. Could expose via `Go()` options.
+
+## Correlation ID / request tracing
+
+No built-in correlation ID propagation. Must thread through every state struct manually. Could add to `durable.Context`.
+
+## Direct child workflow result access (ReceiveGet)
+
+A parent can't `Get()` a child's result. Children must explicitly send results back via `BufferSend()`, adding extra message types. Could add a `durable.ReceiveGet()` continuation that waits for a child routine to complete and feeds its result into the next handler.
 
 ## Explore splitting the durable routine client API and actual routine handler API into two packages for clarity
 

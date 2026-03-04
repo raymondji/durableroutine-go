@@ -20,7 +20,7 @@ func main() {
 	demorunner.Run(w, func(client durable.Client) {
 		ctx := context.Background()
 
-		h, err := durable.Go(client, ctx, "batch-001", fanoutSvc.StartItems, fanout.FanoutState{
+		h, err := durable.Go(client, ctx, "batch-001", fanoutSvc.StartItems, fanout.FanoutInput{
 			Items: []struct {
 				ID   string
 				Data string

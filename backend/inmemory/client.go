@@ -14,23 +14,23 @@ type client struct {
 
 var _ durable.ClientImpl = (*client)(nil)
 
-func (c *client) Go(_ context.Context, id string, kind string, state any) error {
-	return c.runtime.start(id, kind, state)
+func (c *client) Go(_ context.Context, id string, kind string, resultKind string, input any) error {
+	return c.runtime.start(id, kind, resultKind, input)
 }
 
-func (c *client) Send(_ context.Context, id string, stateKind string, msgKind string, msg any) error {
-	sendKey := durablecore.SendKey(stateKind, msgKind)
+func (c *client) Send(_ context.Context, id string, inputKind string, externalInputKind string, resultKind string, externalInput any) error {
+	sendKey := durablecore.SendKey(inputKind, externalInputKind, resultKind)
 	c.runtime.mu.Lock()
 	inst, ok := c.runtime.instances[id]
 	c.runtime.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("routine %s not found", id)
 	}
-	inst.sendCh <- sendMsg{key: sendKey, msg: msg}
+	inst.sendCh <- sendMsg{key: sendKey, msg: externalInput}
 	return nil
 }
 
-func (c *client) Call(_ context.Context, id string, stateKind string, reqKind string, req any) (any, error) {
+func (c *client) Call(_ context.Context, id string, inputKind string, externalReqKind string, externalRespKind string, resultKind string, externalReq any) (any, error) {
 	c.runtime.mu.Lock()
 	inst, ok := c.runtime.instances[id]
 	c.runtime.mu.Unlock()
@@ -38,14 +38,14 @@ func (c *client) Call(_ context.Context, id string, stateKind string, reqKind st
 		return nil, fmt.Errorf("routine %s not found", id)
 	}
 
-	callName := reqKind
-	handlerKey := durablecore.CallKey(stateKind, reqKind)
+	callName := externalReqKind
+	handlerKey := durablecore.CallKey(inputKind, externalReqKind, externalRespKind, resultKind)
 	respCh := make(chan callResp, 1)
 
 	inst.callChan <- callReq{
 		callName:   callName,
 		handlerKey: handlerKey,
-		req:        req,
+		req:        externalReq,
 		respCh:     respCh,
 	}
 

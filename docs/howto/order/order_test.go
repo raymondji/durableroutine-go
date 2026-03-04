@@ -21,7 +21,7 @@ func TestOrderHappyPath(t *testing.T) {
 		defer cancel()
 
 		id := env.UniqueID("order-happy")
-		h, err := durable.Go(env.Client, ctx, id, svc.CreateOrder, order.OrderState{})
+		h, err := durable.Go(env.Client, ctx, id, svc.CreateOrder, order.OrderInput{})
 		if err != nil {
 			t.Fatalf("Go failed: %v", err)
 		}
@@ -57,7 +57,7 @@ func TestOrderCancel(t *testing.T) {
 		defer cancel()
 
 		id := env.UniqueID("order-cancel")
-		h, err := durable.Go(env.Client, ctx, id, svc.CreateOrder, order.OrderState{})
+		h, err := durable.Go(env.Client, ctx, id, svc.CreateOrder, order.OrderInput{})
 		if err != nil {
 			t.Fatalf("Go failed: %v", err)
 		}
@@ -101,7 +101,7 @@ func TestOrderExpire(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		h, err := durable.Go(env.Client, ctx, env.UniqueID("order-expire"), svc.CreateOrder, order.OrderState{})
+		h, err := durable.Go(env.Client, ctx, env.UniqueID("order-expire"), svc.CreateOrder, order.OrderInput{})
 		if err != nil {
 			t.Fatalf("Go failed: %v", err)
 		}

@@ -14,9 +14,9 @@ go mod init myreminder
 go get github.com/raymondji/durableroutine-go
 ```
 
-## Step 2: Define state types
+## Step 2: Define input types
 
-Each handler step declares its own state type. State flows forward through the chain via continuations.
+Each handler step declares its own input type. Input flows forward through the chain via continuations.
 
 Create `main.go`:
 
@@ -33,16 +33,16 @@ import (
 	"github.com/raymondji/durableroutine-go/durable"
 )
 
-// Each state type implements durable.HandlerState via Kind().
+// Each input type implements durable.Payload via DurableKind().
 
-type InitialState struct{ Email string }
-func (InitialState) Kind() string { return "reminder.initial" }
+type InitialInput struct{ Email string }
+func (InitialInput) DurableKind() string { return "reminder.initial" }
 
-type FollowUpState struct{ Email string }
-func (FollowUpState) Kind() string { return "reminder.follow-up" }
+type FollowUpInput struct{ Email string }
+func (FollowUpInput) DurableKind() string { return "reminder.follow-up" }
 
-type FinalState struct{ Email string }
-func (FinalState) Kind() string { return "reminder.final" }
+type FinalInput struct{ Email string }
+func (FinalInput) DurableKind() string { return "reminder.final" }
 ```
 
 ## Step 3: Write handlers
@@ -52,18 +52,18 @@ Handlers are normal Go functions — no replay-safety constraints. Each returns 
 ```go
 type ReminderService struct{}
 
-func (s *ReminderService) SendInitial(ctx *durable.Context, state InitialState) (*durable.Continuation[durable.Unit], error) {
-	fmt.Printf("sending initial email to %s\n", state.Email)
-	return durable.After(1*time.Millisecond, s.SendFollowUp, FollowUpState{Email: state.Email}), nil
+func (s *ReminderService) SendInitial(ctx *durable.Context, input InitialInput) (*durable.Continuation[durable.Unit], error) {
+	fmt.Printf("sending initial email to %s\n", input.Email)
+	return durable.After(1*time.Millisecond, s.SendFollowUp, FollowUpInput{Email: input.Email}), nil
 }
 
-func (s *ReminderService) SendFollowUp(ctx *durable.Context, state FollowUpState) (*durable.Continuation[durable.Unit], error) {
-	fmt.Printf("sending follow-up email to %s\n", state.Email)
-	return durable.After(1*time.Millisecond, s.SendFinal, FinalState{Email: state.Email}), nil
+func (s *ReminderService) SendFollowUp(ctx *durable.Context, input FollowUpInput) (*durable.Continuation[durable.Unit], error) {
+	fmt.Printf("sending follow-up email to %s\n", input.Email)
+	return durable.After(1*time.Millisecond, s.SendFinal, FinalInput{Email: input.Email}), nil
 }
 
-func (s *ReminderService) SendFinal(ctx *durable.Context, state FinalState) (*durable.Continuation[durable.Unit], error) {
-	fmt.Printf("sending final email to %s\n", state.Email)
+func (s *ReminderService) SendFinal(ctx *durable.Context, input FinalInput) (*durable.Continuation[durable.Unit], error) {
+	fmt.Printf("sending final email to %s\n", input.Email)
 	return durable.Done(durable.Unit{}), nil
 }
 ```
@@ -89,7 +89,7 @@ func main() {
 	// 3. Launch a durable routine.
 	ctx := context.Background()
 	h, err := durable.Go(client, ctx, "reminder-user-42",
-		svc.SendInitial, InitialState{Email: "user@example.com"})
+		svc.SendInitial, InitialInput{Email: "user@example.com"})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -152,7 +152,7 @@ defer tw.Stop()
 client := durable.NewClientFrom(temporal.NewClient(tc, "reminder-queue"))
 ```
 
-Everything else — state types, handlers, client calls — stays exactly the same.
+Everything else — input types, handlers, client calls — stays exactly the same.
 
 ## Next steps
 

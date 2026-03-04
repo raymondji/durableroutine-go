@@ -19,7 +19,7 @@ func TestAuctionBidAcceptReject(t *testing.T) {
 		defer cancel()
 
 		id := env.UniqueID("auction-bids")
-		h, err := durable.Go(env.Client, ctx, id, svc.OpenAuction, auction.AuctionState{
+		h, err := durable.Go(env.Client, ctx, id, svc.OpenAuction, auction.AuctionInput{
 			ItemName:    "Vintage Watch",
 			StartingBid: 100.0,
 			Duration:    30 * time.Second,
@@ -94,7 +94,7 @@ func TestAuctionNoBids(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		h, err := durable.Go(env.Client, ctx, env.UniqueID("auction-nobids"), svc.OpenAuction, auction.AuctionState{
+		h, err := durable.Go(env.Client, ctx, env.UniqueID("auction-nobids"), svc.OpenAuction, auction.AuctionInput{
 			ItemName:    "Empty Auction",
 			StartingBid: 50.0,
 			Duration:    1 * time.Millisecond,
@@ -118,6 +118,6 @@ func TestAuctionNoBids(t *testing.T) {
 	})
 }
 
-func TestAuctionBidTerminalError(t *testing.T) {
+func TestAuctionBidRecoveryHandler(t *testing.T) {
 	t.Skip("needs injectable failure in PlaceBid")
 }

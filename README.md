@@ -6,15 +6,17 @@
 
 - **Bottom-up view:** Like native goroutines and channels, but durable and distributed.
 
-- **Top-down view:** Most of Temporal's power, minus the pain of replay-safety and continue-as-new 
+- **Top-down view:** Most of Temporal's power, minus the pain of replay-safety and continue-as-new
+
+For more on the pitfalls of replay-based durable execution that this library avoids, see Chris Gillum's (Azure Durable Functions) [Common Pitfalls with Durable Execution Frameworks](https://blog.cgillum.tech/common-pitfalls-with-durable-execution-frameworks-like-durable-functions-or-temporal-eaf635d4a8bb) (determinism constraints, versioning, history log sizes, continue-as-new) and Long Quanzheng's (creator of Indeed Workflow Framework) [Durable Execution is NOT the Only Way](https://medium.com/@qlong/workflow-should-be-code-but-durable-execution-is-not-the-only-way-519f7682360c) (paradigm shift, cooperative threading model, unit testing difficulty, operational overhead).
 
 ## Show me some code
 
 A booking flow: reserve an item, wait for payment or cancellation, then ship.
 
 ```go
-func (s *BookingService) ReserveItem(ctx *durable.Context, state BookingState) (*durable.Continuation[BookingResult], error) {
-    reserved := ReservedState{UserID: state.UserID, ItemID: state.ItemID}
+func (s *BookingService) ReserveItem(ctx *durable.Context, input BookingInput) (*durable.Continuation[BookingResult], error) {
+    reserved := ReservedInput{UserID: input.UserID, ItemID: input.ItemID}
     durable.SetQueryResult(ctx, StatusResp{Status: "reserved"})
 
     return durable.Select(
@@ -24,9 +26,9 @@ func (s *BookingService) ReserveItem(ctx *durable.Context, state BookingState) (
     ), nil
 }
 
-func (s *BookingService) ProcessPayment(ctx *durable.Context, state ReservedState, msg PaymentInfo) (*durable.Continuation[BookingResult], error) {
-    chargeCard(msg.CardNumber)
-    paid := PaidState{UserID: state.UserID, ItemID: state.ItemID, PaymentID: "PAY-123"}
+func (s *BookingService) ProcessPayment(ctx *durable.Context, input ReservedInput, externalInput PaymentInfo) (*durable.Continuation[BookingResult], error) {
+    chargeCard(externalInput.CardNumber)
+    paid := PaidInput{UserID: input.UserID, ItemID: input.ItemID, PaymentID: "PAY-123"}
     durable.SetQueryResult(ctx, StatusResp{Status: "paid", PaymentID: paid.PaymentID})
 
     return durable.Select(
@@ -36,9 +38,9 @@ func (s *BookingService) ProcessPayment(ctx *durable.Context, state ReservedStat
 }
 
 // If payment fails after all retries, run compensations.
-func (s *BookingService) PaymentFailed(ctx *durable.Context, state ReservedState, msg PaymentInfo, err error) (*durable.Continuation[BookingResult], error) {
-    refundPaymentIfPaid(state.ItemID)
-    releaseReservation(state.ItemID)
+func (s *BookingService) PaymentFailed(ctx *durable.Context, input ReservedInput, externalInput PaymentInfo, err error) (*durable.Continuation[BookingResult], error) {
+    refundPaymentIfPaid(input.ItemID)
+    releaseReservation(input.ItemID)
 
     return durable.Done(BookingResult{Status: "payment_failed"}), nil
 }
@@ -60,14 +62,14 @@ func main() {
         durable.RegisterCallHandler(w, svc.CancelBooking, durable.HandlerOptions{})
         durable.RegisterSendHandler(w, svc.ProcessPayment, durable.HandlerOptions{
             RetryPolicy: durable.RetryPolicy{MaxAttempts: 3},
-        }).WithTerminalErrorHandler(svc.PaymentFailed, durable.HandlerOptions{})
+        }).WithRecoveryHandler(svc.PaymentFailed, durable.HandlerOptions{})
         w.Start()
     }
 
     // Start a booking routine.
     client := durable.NewClient(/* ... */)
     h, _ := durable.Go(client, ctx, "booking-123", svc.ReserveItem,
-        BookingState{UserID: "user-42", ItemID: "SKU-900"})
+        BookingInput{UserID: "user-42", ItemID: "SKU-900"})
 
     // Query current status (read-only, instant).
     status, _ := durable.Query(client, ctx, "booking-123", StatusResp{})
@@ -105,7 +107,7 @@ Follow the [Quick Start](docs/tutorials/QUICK_START.md) to build your first dura
 | [`auction`](docs/howto/auction/auction.go) | Synchronous bidding with live status queries |
 | [`fanout`](docs/howto/fanout/fanout.go) | Fan-out/fan-in with child routines |
 | [`pipeline`](docs/howto/pipeline/pipeline.go) | Producer-consumer pipeline |
-| [`saga`](docs/howto/saga/saga.go) | SAGA compensation with terminal error handlers |
+| [`saga`](docs/howto/saga/saga.go) | SAGA compensation with recovery handlers |
 | [`batch`](docs/howto/batch/batch.go) | Chunked batch processing with cancellation |
 
 ## Comparison
@@ -133,5 +135,5 @@ Follow the [Quick Start](docs/tutorials/QUICK_START.md) to build your first dura
 - **[Elixir GenServer](https://hexdocs.pm/elixir/GenServer.html)** — actor model semantics; the handler-returns-continuation loop mirrors GenServer callbacks
 - **Go goroutines & channels** — the native primitives this library tries to stay close to in spirit
 - **[Continuation-passing style](https://en.wikipedia.org/wiki/Continuation-passing_style)** — functions that return an explicit Continuation (the remaining work), making control flow explicit
-- **[River](https://riverqueue.com/)** — type-safe registration via self-identifying `Kind()` types
+- **[River](https://riverqueue.com/)** — type-safe registration via self-identifying `DurableKind()` types
 - **[iWF](https://github.com/indeedeng/iwf)** — similar goal of moving user code out of the replay-safe workflow function

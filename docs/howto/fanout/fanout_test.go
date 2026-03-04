@@ -19,7 +19,7 @@ func TestFanoutCollectAllResults(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		h, err := durable.Go(env.Client, ctx, env.UniqueID("fanout"), fanoutSvc.StartItems, fanout.FanoutState{
+		h, err := durable.Go(env.Client, ctx, env.UniqueID("fanout"), fanoutSvc.StartItems, fanout.FanoutInput{
 			Items: []struct {
 				ID   string
 				Data string

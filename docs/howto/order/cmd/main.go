@@ -23,7 +23,7 @@ func main() {
 	demorunner.Run(w, func(client durable.Client) {
 		ctx := context.Background()
 
-		h, err := durable.Go(client, ctx, "order-123", svc.CreateOrder, order.OrderState{})
+		h, err := durable.Go(client, ctx, "order-123", svc.CreateOrder, order.OrderInput{})
 		if err != nil {
 			log.Fatal(err)
 		}

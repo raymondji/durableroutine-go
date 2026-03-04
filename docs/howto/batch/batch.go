@@ -14,11 +14,11 @@ const ChunkSize = 100
 
 // --- State ---
 
-type BatchState struct {
+type BatchInput struct {
 	Items []string
 }
 
-func (BatchState) Kind() string { return "batch" }
+func (BatchInput) DurableKind() string { return "batch" }
 
 // --- Messages ---
 
@@ -26,7 +26,7 @@ type CancelMsg struct {
 	Reason string
 }
 
-func (CancelMsg) Kind() string { return "cancel" }
+func (CancelMsg) DurableKind() string { return "cancel" }
 
 // --- Result ---
 
@@ -36,16 +36,18 @@ type BatchResult struct {
 	Cancelled bool
 }
 
+func (BatchResult) DurableKind() string { return "batch-result" }
+
 // --- Per-step state types ---
 
-type ProcessingState struct {
+type ProcessingInput struct {
 	Items     []string
 	Offset    int
 	Processed int
 	Errors    int
 }
 
-func (ProcessingState) Kind() string { return "batch.processing" }
+func (ProcessingInput) DurableKind() string { return "batch.processing" }
 
 // --- Service struct ---
 
@@ -53,55 +55,55 @@ type BatchService struct {
 	// Injected dependencies would go here (e.g., DB client, API client).
 }
 
-func (s *BatchService) StartBatch(ctx *durable.Context, state BatchState) (*durable.Continuation[BatchResult], error) {
-	fmt.Printf("starting batch of %d items\n", len(state.Items))
-	processing := ProcessingState{Items: state.Items}
+func (s *BatchService) StartBatch(ctx *durable.Context, input BatchInput) (*durable.Continuation[BatchResult], error) {
+	fmt.Printf("starting batch of %d items\n", len(input.Items))
+	processing := ProcessingInput{Items: input.Items}
 
 	// Process the first chunk immediately, then use Continue for subsequent chunks.
 	return s.processChunk(ctx, processing)
 }
 
-func (s *BatchService) ProcessChunk(ctx *durable.Context, state ProcessingState) (*durable.Continuation[BatchResult], error) {
-	return s.processChunk(ctx, state)
+func (s *BatchService) ProcessChunk(ctx *durable.Context, input ProcessingInput) (*durable.Continuation[BatchResult], error) {
+	return s.processChunk(ctx, input)
 }
 
-func (s *BatchService) processChunk(_ *durable.Context, state ProcessingState) (*durable.Continuation[BatchResult], error) {
-	end := state.Offset + ChunkSize
-	if end > len(state.Items) {
-		end = len(state.Items)
+func (s *BatchService) processChunk(_ *durable.Context, input ProcessingInput) (*durable.Continuation[BatchResult], error) {
+	end := input.Offset + ChunkSize
+	if end > len(input.Items) {
+		end = len(input.Items)
 	}
 
 	// Process this chunk — normal Go code, no replay-safety constraints.
-	for _, item := range state.Items[state.Offset:end] {
+	for _, item := range input.Items[input.Offset:end] {
 		if err := ProcessItem(item); err != nil {
-			state.Errors++
+			input.Errors++
 			fmt.Printf("  error processing %s: %v\n", item, err)
 		} else {
-			state.Processed++
+			input.Processed++
 		}
 	}
-	state.Offset = end
+	input.Offset = end
 
 	fmt.Printf("  chunk done: %d/%d processed (%d errors)\n",
-		state.Offset, len(state.Items), state.Errors)
+		input.Offset, len(input.Items), input.Errors)
 
-	if state.Offset >= len(state.Items) {
+	if input.Offset >= len(input.Items) {
 		// All items processed.
 		fmt.Printf("batch complete: %d processed, %d errors\n",
-			state.Processed, state.Errors)
-		return durable.Done(BatchResult{Processed: state.Processed, Errors: state.Errors}), nil
+			input.Processed, input.Errors)
+		return durable.Done(BatchResult{Processed: input.Processed, Errors: input.Errors}), nil
 	}
 
 	return durable.Select(
-		durable.ReceiveSend(s.CancelBatch, state),
-		durable.Default(s.ProcessChunk, state),
+		durable.ReceiveSend(s.CancelBatch, input),
+		durable.Default(s.ProcessChunk, input),
 	), nil
 }
 
-func (s *BatchService) CancelBatch(ctx *durable.Context, state ProcessingState, msg CancelMsg) (*durable.Continuation[BatchResult], error) {
+func (s *BatchService) CancelBatch(ctx *durable.Context, input ProcessingInput, externalInput CancelMsg) (*durable.Continuation[BatchResult], error) {
 	fmt.Printf("batch cancelled (reason: %s) after %d/%d items (%d errors)\n",
-		msg.Reason, state.Offset, len(state.Items), state.Errors)
-	return durable.Done(BatchResult{Processed: state.Processed, Errors: state.Errors, Cancelled: true}), nil
+		externalInput.Reason, input.Offset, len(input.Items), input.Errors)
+	return durable.Done(BatchResult{Processed: input.Processed, Errors: input.Errors, Cancelled: true}), nil
 }
 
 // ProcessItem simulates processing a single item.

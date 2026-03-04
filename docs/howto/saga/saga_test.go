@@ -20,7 +20,7 @@ func TestSagaHappyPath(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		h, err := durable.Go(env.Client, ctx, env.UniqueID("saga-happy"), svc.BookFlight, saga.TripState{
+		h, err := durable.Go(env.Client, ctx, env.UniqueID("saga-happy"), svc.BookFlight, saga.TripInput{
 			TripID:      "TRIP-1",
 			FlightID:    "FL-100",
 			HotelID:     "HT-200",
@@ -60,7 +60,7 @@ func TestSagaHotelFailure(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		h, err := durable.Go(env.Client, ctx, env.UniqueID("saga-hotel-fail"), svc.BookFlight, saga.TripState{
+		h, err := durable.Go(env.Client, ctx, env.UniqueID("saga-hotel-fail"), svc.BookFlight, saga.TripInput{
 			TripID:      "TRIP-2",
 			FlightID:    "FL-100",
 			HotelID:     "HT-200",
@@ -94,7 +94,7 @@ func TestSagaCarFailure(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		h, err := durable.Go(env.Client, ctx, env.UniqueID("saga-car-fail"), svc.BookFlight, saga.TripState{
+		h, err := durable.Go(env.Client, ctx, env.UniqueID("saga-car-fail"), svc.BookFlight, saga.TripInput{
 			TripID:      "TRIP-3",
 			FlightID:    "FL-100",
 			HotelID:     "HT-200",

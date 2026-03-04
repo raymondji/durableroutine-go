@@ -21,7 +21,7 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 	var ha *handlerActivity
 
 	handlerKey := input.HandlerKey
-	var state json.RawMessage = input.State
+	var handlerInput json.RawMessage = input.Input
 
 	// Restore query results from previous execution (continue-as-new).
 	allQueryResults := append([]QueryEntry{}, input.QueryResults...)
@@ -39,7 +39,7 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 	type pendingCall struct {
 		handlerKey string
 		req        json.RawMessage
-		state      json.RawMessage
+		input      json.RawMessage
 		responseCh workflow.Channel
 	}
 	var pendingCalls []pendingCall
@@ -67,7 +67,7 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 			activityInput := ActivityInput{
 				HandlerKey: handlerKey,
 				RoutineID:  workflow.GetInfo(ctx).WorkflowExecution.ID,
-				State:      state,
+				Input:      handlerInput,
 				Message:    message,
 			}
 			message = nil // consumed
@@ -77,12 +77,12 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 			err := workflow.ExecuteActivity(activityCtx, ha.RunHandler, activityInput).Get(ctx, &output)
 
 			if err != nil {
-				teKey := wh.lookupTerminalErrorKey(handlerKey)
+				teKey := wh.lookupRecoveryHandlerKey(handlerKey)
 				if teKey != "" {
 					teInput := ActivityInput{
 						HandlerKey: teKey,
 						RoutineID:  activityInput.RoutineID,
-						State:      state,
+						Input:      handlerInput,
 						Message:    activityInput.Message,
 						Error:      err.Error(),
 					}
@@ -116,15 +116,15 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 				ParentClosePolicy: enumspb.PARENT_CLOSE_POLICY_ABANDON,
 			})
 			childInput := WorkflowInput{
-				HandlerKey: durablecore.HandlerKey(start.StateKind),
-				State:      start.State,
+				HandlerKey: durablecore.HandlerKey(start.InputKind, start.ResultKind),
+				Input:      start.Input,
 			}
 			workflow.ExecuteChildWorkflow(childCtx, wh.RoutineWorkflow, childInput)
 		}
 
 		// 4. Handle send requests — wait for each signal to be acknowledged.
 		for _, sr := range output.SendRequests {
-			signalName := durablecore.SendKey(sr.StateKind, sr.MsgKind)
+			signalName := durablecore.SendKey(sr.InputKind, sr.ExternalInputKind, sr.ResultKind)
 			f := workflow.SignalExternalWorkflow(ctx, sr.RoutineID, "", signalName, sr.Msg)
 			if err := f.Get(ctx, nil); err != nil {
 				// Signal delivery failed (e.g., target workflow not found).
@@ -148,7 +148,7 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 		// If the only case is immediate (Continue), skip the selector.
 		if len(cont.Cases) == 1 && cont.Cases[0].Immediate {
 			handlerKey = cont.Cases[0].HandlerKey
-			state = cont.Cases[0].State
+			handlerInput = cont.Cases[0].Input
 			goto continueAsNewCheck
 		}
 
@@ -158,14 +158,14 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 				continue
 			}
 			c := c
-			// Use HandlerKey as the update name — matches the client's "call:{stateKind}:{reqKind}".
+			// Use HandlerKey as the update name — matches the client's "call:{stateKind}:{reqKind}:{respKind}:{resultKind}".
 			workflow.SetUpdateHandler(ctx, c.HandlerKey,
 				func(ctx workflow.Context, req json.RawMessage) (any, error) {
 					responseCh := workflow.NewChannel(ctx)
 					pendingCalls = append(pendingCalls, pendingCall{
 						handlerKey: c.HandlerKey,
 						req:        req,
-						state:      c.State,
+						input:      c.Input,
 						responseCh: responseCh,
 					})
 					callNotifyCh.SendAsync(true)
@@ -193,7 +193,7 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 				timer := workflow.NewTimer(ctx, *c.TimerDuration)
 				sel.AddFuture(timer, func(f workflow.Future) {
 					handlerKey = c.HandlerKey
-					state = c.State
+					handlerInput = c.Input
 				})
 			}
 
@@ -216,7 +216,7 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 					callInput := ActivityInput{
 						HandlerKey: pc.handlerKey,
 						RoutineID:  workflow.GetInfo(ctx).WorkflowExecution.ID,
-						State:      pc.state,
+						Input:      pc.input,
 						Message:    pc.req,
 					}
 
@@ -225,12 +225,12 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 					var callOutput ActivityOutput
 					err := workflow.ExecuteActivity(callActivityCtx, ha.RunHandler, callInput).Get(ctx, &callOutput)
 					if err != nil {
-						teKey := wh.lookupTerminalErrorKey(pc.handlerKey)
+						teKey := wh.lookupRecoveryHandlerKey(pc.handlerKey)
 						if teKey != "" {
 							teInput := ActivityInput{
 								HandlerKey: teKey,
 								RoutineID:  workflow.GetInfo(ctx).WorkflowExecution.ID,
-								State:      pc.state,
+								Input:      pc.input,
 								Message:    pc.req,
 								Error:      err.Error(),
 							}
@@ -271,7 +271,7 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 					var msg json.RawMessage
 					ch.Receive(ctx, &msg)
 					handlerKey = c.HandlerKey
-					state = c.State
+					handlerInput = c.Input
 					message = msg
 				})
 			}
@@ -284,7 +284,7 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 				c := c
 				sel.AddDefault(func() {
 					handlerKey = c.HandlerKey
-					state = c.State
+					handlerInput = c.Input
 				})
 			}
 
@@ -307,7 +307,7 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 				callInput := ActivityInput{
 					HandlerKey: pc.handlerKey,
 					RoutineID:  workflow.GetInfo(ctx).WorkflowExecution.ID,
-					State:      pc.state,
+					Input:      pc.input,
 					Message:    pc.req,
 				}
 				callActivityCtx := workflow.WithActivityOptions(ctx, wh.lookupActivityOptions(pc.handlerKey))
@@ -321,13 +321,13 @@ func (wh *workflowHandler) RoutineWorkflow(ctx workflow.Context, input WorkflowI
 
 				if callOutput.Continuation != nil && len(callOutput.Continuation.Cases) > 0 {
 					handlerKey = callOutput.Continuation.Cases[0].HandlerKey
-					state = callOutput.Continuation.Cases[0].State
+					handlerInput = callOutput.Continuation.Cases[0].Input
 				}
 			}
 
 			return nil, workflow.NewContinueAsNewError(ctx, wh.RoutineWorkflow, WorkflowInput{
 				HandlerKey:       handlerKey,
-				State:            state,
+				Input:            handlerInput,
 				QueryResults:     allQueryResults,
 				MaxHistoryLength: input.MaxHistoryLength,
 			})
@@ -371,13 +371,13 @@ func (wh *workflowHandler) lookupActivityOptions(handlerKey string) workflow.Act
 	return opts
 }
 
-// lookupTerminalErrorKey checks if a terminal error handler is registered.
-func (wh *workflowHandler) lookupTerminalErrorKey(handlerKey string) string {
+// lookupRecoveryHandlerKey checks if a recovery handler is registered.
+func (wh *workflowHandler) lookupRecoveryHandlerKey(handlerKey string) string {
 	entry, ok := wh.reg.entries[handlerKey]
 	if !ok {
 		return ""
 	}
-	teKey := entry.options.WithTerminalErrorHandlerKey()
+	teKey := entry.options.RecoveryHandlerKey()
 	if teKey == "" {
 		return ""
 	}

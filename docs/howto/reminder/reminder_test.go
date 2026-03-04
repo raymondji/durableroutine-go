@@ -21,7 +21,7 @@ func TestReminderFullSequence(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		h, err := durable.Go(env.Client, ctx, env.UniqueID("reminder"), svc.SendInitial, reminder.InitialState{Email: "test@example.com"})
+		h, err := durable.Go(env.Client, ctx, env.UniqueID("reminder"), svc.SendInitial, reminder.InitialInput{Email: "test@example.com"})
 		if err != nil {
 			t.Fatalf("Go failed: %v", err)
 		}

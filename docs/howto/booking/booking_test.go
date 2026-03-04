@@ -20,7 +20,7 @@ func TestBookingHappyPath(t *testing.T) {
 		defer cancel()
 
 		id := env.UniqueID("booking-happy")
-		h, err := durable.Go(env.Client, ctx, id, svc.ReserveItem, booking.BookingState{
+		h, err := durable.Go(env.Client, ctx, id, svc.ReserveItem, booking.BookingInput{
 			UserID: "user-1", ItemID: "item-1",
 		})
 		if err != nil {
@@ -66,7 +66,7 @@ func TestBookingCancel(t *testing.T) {
 		defer cancel()
 
 		id := env.UniqueID("booking-cancel")
-		h, err := durable.Go(env.Client, ctx, id, svc.ReserveItem, booking.BookingState{
+		h, err := durable.Go(env.Client, ctx, id, svc.ReserveItem, booking.BookingInput{
 			UserID: "user-1", ItemID: "item-1",
 		})
 		if err != nil {
@@ -106,7 +106,7 @@ func TestBookingExpireReservation(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		h, err := durable.Go(env.Client, ctx, env.UniqueID("booking-expire"), svc.ReserveItem, booking.BookingState{
+		h, err := durable.Go(env.Client, ctx, env.UniqueID("booking-expire"), svc.ReserveItem, booking.BookingInput{
 			UserID: "user-1", ItemID: "item-1",
 		})
 		if err != nil {
@@ -138,7 +138,7 @@ func TestBookingPaymentFailure(t *testing.T) {
 		defer cancel()
 
 		id := env.UniqueID("booking-pay-fail")
-		h, err := durable.Go(env.Client, ctx, id, svc.ReserveItem, booking.BookingState{
+		h, err := durable.Go(env.Client, ctx, id, svc.ReserveItem, booking.BookingInput{
 			UserID: "user-1", ItemID: "item-1",
 		})
 		if err != nil {
@@ -175,7 +175,7 @@ func TestBookingQueryStatus(t *testing.T) {
 		defer cancel()
 
 		id := env.UniqueID("booking-query")
-		_, err := durable.Go(env.Client, ctx, id, svc.ReserveItem, booking.BookingState{
+		_, err := durable.Go(env.Client, ctx, id, svc.ReserveItem, booking.BookingInput{
 			UserID: "user-1", ItemID: "item-1",
 		})
 		if err != nil {

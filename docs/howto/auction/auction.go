@@ -3,8 +3,8 @@
 // was accepted or outbid. The auction runs until a timer expires, then
 // completes with the winning bid. Current status is available via ClientQuery.
 //
-// Also demonstrates ReceiveCallTerminalError: if bid processing fails after all
-// retries, the terminal error handler returns an error response to the blocked
+// Also demonstrates CallRecoveryHandler: if bid processing fails after all
+// retries, the recovery handler returns an error response to the blocked
 // caller instead of failing the entire routine.
 package auction
 
@@ -17,13 +17,13 @@ import (
 
 // --- State ---
 
-type AuctionState struct {
+type AuctionInput struct {
 	ItemName    string
 	StartingBid float64
 	Duration    time.Duration
 }
 
-func (AuctionState) Kind() string { return "auction" }
+func (AuctionInput) DurableKind() string { return "auction" }
 
 // --- Messages ---
 
@@ -32,13 +32,15 @@ type PlaceBidReq struct {
 	Amount   float64
 }
 
-func (PlaceBidReq) Kind() string { return "place-bid" }
+func (PlaceBidReq) DurableKind() string { return "place-bid" }
 
 type PlaceBidResp struct {
 	Accepted   bool
 	HighestBid float64
 	Message    string
 }
+
+func (PlaceBidResp) DurableKind() string { return "place-bid-resp" }
 
 type AuctionStatusResp struct {
 	ItemName   string
@@ -47,7 +49,7 @@ type AuctionStatusResp struct {
 	BidCount   int
 }
 
-func (AuctionStatusResp) Kind() string { return "auction-status" }
+func (AuctionStatusResp) DurableKind() string { return "auction-status" }
 
 // --- Result ---
 
@@ -58,17 +60,19 @@ type AuctionResult struct {
 	BidCount int
 }
 
+func (AuctionResult) DurableKind() string { return "auction-result" }
+
 // --- Per-step state types ---
 
-type BiddingState struct {
+type BiddingInput struct {
 	ItemName   string
-	Duration   time.Duration
+	Deadline   time.Time
 	HighestBid float64
 	Leader     string
 	BidCount   int
 }
 
-func (BiddingState) Kind() string { return "auction.bidding" }
+func (BiddingInput) DurableKind() string { return "auction.bidding" }
 
 // --- Service struct ---
 
@@ -76,13 +80,13 @@ type AuctionService struct {
 	// Injected dependencies would go here (e.g., notification service).
 }
 
-func (s *AuctionService) OpenAuction(ctx *durable.Context, state AuctionState) (*durable.Continuation[AuctionResult], error) {
-	fmt.Printf("auction opened for %q, starting bid: $%.2f\n", state.ItemName, state.StartingBid)
+func (s *AuctionService) OpenAuction(ctx *durable.Context, input AuctionInput) (*durable.Continuation[AuctionResult], error) {
+	fmt.Printf("auction opened for %q, starting bid: $%.2f\n", input.ItemName, input.StartingBid)
 
-	bidding := BiddingState{
-		ItemName:   state.ItemName,
-		Duration:   state.Duration,
-		HighestBid: state.StartingBid,
+	bidding := BiddingInput{
+		ItemName:   input.ItemName,
+		Deadline:   time.Now().Add(input.Duration),
+		HighestBid: input.StartingBid,
 	}
 
 	durable.SetQueryResult(ctx, AuctionStatusResp{
@@ -92,72 +96,72 @@ func (s *AuctionService) OpenAuction(ctx *durable.Context, state AuctionState) (
 
 	return durable.Select(
 		durable.ReceiveCall(s.PlaceBid, bidding),
-		durable.After(state.Duration, s.CloseAuction, bidding),
+		durable.After(time.Until(bidding.Deadline), s.CloseAuction, bidding),
 	), nil
 }
 
-func (s *AuctionService) PlaceBid(ctx *durable.Context, state BiddingState, req PlaceBidReq) (PlaceBidResp, *durable.Continuation[AuctionResult], error) {
-	if req.Amount <= state.HighestBid {
+func (s *AuctionService) PlaceBid(ctx *durable.Context, input BiddingInput, externalReq PlaceBidReq) (PlaceBidResp, *durable.Continuation[AuctionResult], error) {
+	if externalReq.Amount <= input.HighestBid {
 		return PlaceBidResp{
 				Accepted:   false,
-				HighestBid: state.HighestBid,
-				Message:    fmt.Sprintf("bid too low, current highest is $%.2f", state.HighestBid),
+				HighestBid: input.HighestBid,
+				Message:    fmt.Sprintf("bid too low, current highest is $%.2f", input.HighestBid),
 			}, durable.Select(
-				durable.ReceiveCall(s.PlaceBid, state),
-				durable.After(state.Duration, s.CloseAuction, state),
+				durable.ReceiveCall(s.PlaceBid, input),
+				durable.After(time.Until(input.Deadline), s.CloseAuction, input),
 			), nil
 	}
 
 	fmt.Printf("new high bid: $%.2f by %s (was $%.2f by %s)\n",
-		req.Amount, req.BidderID, state.HighestBid, state.Leader)
+		externalReq.Amount, externalReq.BidderID, input.HighestBid, input.Leader)
 
-	state.HighestBid = req.Amount
-	state.Leader = req.BidderID
-	state.BidCount++
+	input.HighestBid = externalReq.Amount
+	input.Leader = externalReq.BidderID
+	input.BidCount++
 
 	durable.SetQueryResult(ctx, AuctionStatusResp{
-		ItemName:   state.ItemName,
-		HighestBid: state.HighestBid,
-		Leader:     state.Leader,
-		BidCount:   state.BidCount,
+		ItemName:   input.ItemName,
+		HighestBid: input.HighestBid,
+		Leader:     input.Leader,
+		BidCount:   input.BidCount,
 	})
 
 	return PlaceBidResp{
 			Accepted:   true,
-			HighestBid: state.HighestBid,
+			HighestBid: input.HighestBid,
 			Message:    "bid accepted, you are the highest bidder",
 		}, durable.Select(
-			durable.ReceiveCall(s.PlaceBid, state),
-			durable.After(state.Duration, s.CloseAuction, state),
+			durable.ReceiveCall(s.PlaceBid, input),
+			durable.After(time.Until(input.Deadline), s.CloseAuction, input),
 		), nil
 }
 
-func (s *AuctionService) BidFailed(ctx *durable.Context, state BiddingState, req PlaceBidReq, err error) (PlaceBidResp, *durable.Continuation[AuctionResult], error) {
+func (s *AuctionService) BidFailed(ctx *durable.Context, input BiddingInput, externalReq PlaceBidReq, err error) (PlaceBidResp, *durable.Continuation[AuctionResult], error) {
 	fmt.Printf("bid by %s for $%.2f failed after all retries: %v\n",
-		req.BidderID, req.Amount, err)
+		externalReq.BidderID, externalReq.Amount, err)
 
 	return PlaceBidResp{
 			Accepted: false,
 			Message:  fmt.Sprintf("bid processing failed: %v", err),
 		}, durable.Select(
-			durable.ReceiveCall(s.PlaceBid, state),
-			durable.After(state.Duration, s.CloseAuction, state),
+			durable.ReceiveCall(s.PlaceBid, input),
+			durable.After(time.Until(input.Deadline), s.CloseAuction, input),
 		), nil
 }
 
-func (s *AuctionService) CloseAuction(ctx *durable.Context, state BiddingState) (*durable.Continuation[AuctionResult], error) {
-	if state.Leader == "" {
-		fmt.Printf("auction for %q closed with no bids\n", state.ItemName)
+func (s *AuctionService) CloseAuction(ctx *durable.Context, input BiddingInput) (*durable.Continuation[AuctionResult], error) {
+	if input.Leader == "" {
+		fmt.Printf("auction for %q closed with no bids\n", input.ItemName)
 	} else {
 		fmt.Printf("auction for %q closed, winner: %s at $%.2f\n",
-			state.ItemName, state.Leader, state.HighestBid)
+			input.ItemName, input.Leader, input.HighestBid)
 	}
 
 	return durable.Done(AuctionResult{
-		ItemName: state.ItemName,
-		Winner:   state.Leader,
-		Amount:   state.HighestBid,
-		BidCount: state.BidCount,
+		ItemName: input.ItemName,
+		Winner:   input.Leader,
+		Amount:   input.HighestBid,
+		BidCount: input.BidCount,
 	}), nil
 }
 
@@ -166,6 +170,6 @@ func RegisterHandlers(w *durable.Worker, svc *AuctionService) {
 	durable.RegisterHandler(w, svc.OpenAuction, durable.HandlerOptions{})
 	durable.RegisterCallHandler(w, svc.PlaceBid, durable.HandlerOptions{
 		RetryPolicy: durable.RetryPolicy{MaxAttempts: 3},
-	}).WithTerminalErrorHandler(svc.BidFailed, durable.HandlerOptions{})
+	}).WithRecoveryHandler(svc.BidFailed, durable.HandlerOptions{})
 	durable.RegisterHandler(w, svc.CloseAuction, durable.HandlerOptions{})
 }

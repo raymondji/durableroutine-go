@@ -22,7 +22,7 @@ func TestPipelineFullSequence(t *testing.T) {
 		consumerID := env.UniqueID("consumer")
 
 		// Start the consumer first — it waits for items.
-		_, err := durable.Go(env.Client, ctx, consumerID, consumerSvc.StartConsumer, pipeline.ConsumerState{
+		_, err := durable.Go(env.Client, ctx, consumerID, consumerSvc.StartConsumer, pipeline.ConsumerInput{
 			Name: "test-consumer",
 		})
 		if err != nil {
@@ -32,7 +32,7 @@ func TestPipelineFullSequence(t *testing.T) {
 		time.Sleep(2 * time.Second)
 
 		// Start the producer — it sends items to the consumer.
-		producerH, err := durable.Go(env.Client, ctx, env.UniqueID("producer"), producerSvc.Produce, pipeline.ProducerState{
+		producerH, err := durable.Go(env.Client, ctx, env.UniqueID("producer"), producerSvc.Produce, pipeline.ProducerInput{
 			Items:             []string{"one", "two", "three", "four"},
 			ConsumerRoutineID: consumerID,
 		})

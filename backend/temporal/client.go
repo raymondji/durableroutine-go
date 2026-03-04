@@ -31,37 +31,37 @@ func NewClient(tc temporalclient.Client, taskQueue string) *Client {
 	return &Client{temporal: tc, taskQueue: taskQueue}
 }
 
-func (c *Client) Go(ctx context.Context, id string, kind string, state any) error {
-	stateBytes, err := json.Marshal(state)
+func (c *Client) Go(ctx context.Context, id string, kind string, resultKind string, input any) error {
+	inputBytes, err := json.Marshal(input)
 	if err != nil {
-		return fmt.Errorf("marshal state: %w", err)
+		return fmt.Errorf("marshal input: %w", err)
 	}
 	opts := temporalclient.StartWorkflowOptions{
 		ID:                    id,
 		TaskQueue:             c.taskQueue,
 		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
 	}
-	input := WorkflowInput{
-		HandlerKey:       durablecore.HandlerKey(kind),
-		State:            stateBytes,
+	wfInput := WorkflowInput{
+		HandlerKey:       durablecore.HandlerKey(kind, resultKind),
+		Input:            inputBytes,
 		MaxHistoryLength: c.MaxHistoryLength,
 	}
 	var wh *workflowHandler
-	_, err = c.temporal.ExecuteWorkflow(ctx, opts, wh.RoutineWorkflow, input)
+	_, err = c.temporal.ExecuteWorkflow(ctx, opts, wh.RoutineWorkflow, wfInput)
 	return err
 }
 
-func (c *Client) Send(ctx context.Context, id string, stateKind string, msgKind string, msg any) error {
-	signalName := durablecore.SendKey(stateKind, msgKind)
-	return c.temporal.SignalWorkflow(ctx, id, "", signalName, msg)
+func (c *Client) Send(ctx context.Context, id string, inputKind string, externalInputKind string, resultKind string, externalInput any) error {
+	signalName := durablecore.SendKey(inputKind, externalInputKind, resultKind)
+	return c.temporal.SignalWorkflow(ctx, id, "", signalName, externalInput)
 }
 
-func (c *Client) Call(ctx context.Context, id string, stateKind string, reqKind string, req any) (any, error) {
-	updateName := durablecore.CallKey(stateKind, reqKind)
+func (c *Client) Call(ctx context.Context, id string, inputKind string, externalReqKind string, externalRespKind string, resultKind string, externalReq any) (any, error) {
+	updateName := durablecore.CallKey(inputKind, externalReqKind, externalRespKind, resultKind)
 	handle, err := c.temporal.UpdateWorkflow(ctx, temporalclient.UpdateWorkflowOptions{
 		WorkflowID:   id,
 		UpdateName:   updateName,
-		Args:         []any{req},
+		Args:         []any{externalReq},
 		WaitForStage: temporalclient.WorkflowUpdateStageCompleted,
 	})
 	if err != nil {
