@@ -6,18 +6,18 @@ import "context"
 type Context struct {
 	context.Context
 
-	routineID    string
+	routineID     string
 	startRequests []startRequest
 	sendRequests  []sendRequest
 	queryResults  []queryEntry
 }
 
 type sendRequest struct {
-	routineID        string
-	inputKind        string
+	routineID         string
+	inputKind         string
 	externalInputKind string
-	resultKind       string
-	msg              any
+	resultKind        string
+	msg               any
 }
 
 type startRequest struct {
@@ -63,11 +63,11 @@ func BufferSend[I Payload, E Payload, T Payload](ctx *Context, routineID string,
 	var zeroI I
 	var zeroT T
 	ctx.sendRequests = append(ctx.sendRequests, sendRequest{
-		routineID:        routineID,
-		inputKind:        zeroI.DurableKind(),
+		routineID:         routineID,
+		inputKind:         zeroI.DurableKind(),
 		externalInputKind: externalInput.DurableKind(),
-		resultKind:       zeroT.DurableKind(),
-		msg:              externalInput,
+		resultKind:        zeroT.DurableKind(),
+		msg:               externalInput,
 	})
 }
 
@@ -100,11 +100,11 @@ func (c *Context) SendRequests() []SendEntry {
 	out := make([]SendEntry, len(c.sendRequests))
 	for i, e := range c.sendRequests {
 		out[i] = SendEntry{
-			RoutineID:        e.routineID,
-			InputKind:        e.inputKind,
+			RoutineID:         e.routineID,
+			InputKind:         e.inputKind,
 			ExternalInputKind: e.externalInputKind,
-			ResultKind:       e.resultKind,
-			Msg:              e.msg,
+			ResultKind:        e.resultKind,
+			Msg:               e.msg,
 		}
 	}
 	return out
@@ -126,11 +126,11 @@ type StartEntry struct {
 
 // SendEntry is the exported view of a send request.
 type SendEntry struct {
-	RoutineID        string
-	InputKind        string
+	RoutineID         string
+	InputKind         string
 	ExternalInputKind string
-	ResultKind       string
-	Msg              any
+	ResultKind        string
+	Msg               any
 }
 
 // SetQueryResult stores a static query result that persists across state

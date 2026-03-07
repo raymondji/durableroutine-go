@@ -20,7 +20,7 @@ type HandlerOptions struct {
 	RetryPolicy            RetryPolicy
 	StartToCloseTimeout    time.Duration
 	ScheduleToCloseTimeout time.Duration
-	recoveryHandlerKey string // set internally by WithRecoveryHandler; looked up in worker handlers
+	recoveryHandlerKey     string // set internally by WithRecoveryHandler; looked up in worker handlers
 }
 
 // RecoveryHandlerKey returns the handler key for the recovery handler,

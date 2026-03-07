@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/raymondji/durableroutine-go/internal/durablecore"
 	"github.com/raymondji/durableroutine-go/durable"
+	"github.com/raymondji/durableroutine-go/internal/durablecore"
 )
 
 // sendMsg is a message delivered to an instance's sendCh.

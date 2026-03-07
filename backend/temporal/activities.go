@@ -88,11 +88,11 @@ func (a *handlerActivity) RunHandler(ctx context.Context, input ActivityInput) (
 			return ActivityOutput{}, fmt.Errorf("marshal send msg: %w", err)
 		}
 		output.SendRequests = append(output.SendRequests, SendEntry{
-			RoutineID:        sr.RoutineID,
-			InputKind:        sr.InputKind,
+			RoutineID:         sr.RoutineID,
+			InputKind:         sr.InputKind,
 			ExternalInputKind: sr.ExternalInputKind,
-			ResultKind:       sr.ResultKind,
-			Msg:              msgBytes,
+			ResultKind:        sr.ResultKind,
+			Msg:               msgBytes,
 		})
 	}
 
