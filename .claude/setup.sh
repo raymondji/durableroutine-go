@@ -20,10 +20,6 @@ else
   echo "Installing Temporal CLI..."
   # Fetch the latest version tag from GitHub (temporal.download is blocked in some environments)
   TEMPORAL_VERSION=$(curl -sL "https://api.github.com/repos/temporalio/cli/releases/latest" | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))")
-  curl -sL "https://github.com/temporalio/cli/releases/download/v${TEMPORAL_VERSION}/temporal_cli_${TEMPORAL_VERSION}_linux_amd64.tar.gz" -o /tmp/temporal.tar.gz
-  tar -xzf /tmp/temporal.tar.gz -C /tmp/
-  mv /tmp/temporal "$HOME/go/bin/temporal"
-  chmod +x "$HOME/go/bin/temporal"
-  rm -f /tmp/temporal.tar.gz
+  curl -sL "https://github.com/temporalio/cli/releases/download/v${TEMPORAL_VERSION}/temporal_cli_${TEMPORAL_VERSION}_linux_amd64.tar.gz" | tar -xz -C "$HOME/go/bin/" temporal
   echo "Temporal CLI installed: $(temporal --version)"
 fi
