@@ -15,9 +15,14 @@ fi
 
 # Install Temporal CLI if not already present
 if command -v temporal &> /dev/null; then
-  echo "Temporal CLI already installed: $(temporal version)"
+  echo "Temporal CLI already installed: $(temporal --version)"
 else
   echo "Installing Temporal CLI..."
-  go install github.com/temporalio/cli/cmd/temporal@latest
-  echo "Temporal CLI installed: $(temporal version)"
+  TEMPORAL_VERSION="1.6.1"
+  curl -sL "https://github.com/temporalio/cli/releases/download/v${TEMPORAL_VERSION}/temporal_cli_${TEMPORAL_VERSION}_linux_amd64.tar.gz" -o /tmp/temporal.tar.gz
+  tar -xzf /tmp/temporal.tar.gz -C /tmp/
+  mv /tmp/temporal "$HOME/go/bin/temporal"
+  chmod +x "$HOME/go/bin/temporal"
+  rm -f /tmp/temporal.tar.gz
+  echo "Temporal CLI installed: $(temporal --version)"
 fi
