@@ -15,9 +15,11 @@ fi
 
 # Install Temporal CLI if not already present
 if command -v temporal &> /dev/null; then
-  echo "Temporal CLI already installed: $(temporal version)"
+  echo "Temporal CLI already installed: $(temporal --version)"
 else
   echo "Installing Temporal CLI..."
-  go install github.com/temporalio/cli/cmd/temporal@latest
-  echo "Temporal CLI installed: $(temporal version)"
+  # Fetch the latest version tag from GitHub (temporal.download is blocked in some environments)
+  TEMPORAL_VERSION=$(curl -sL "https://api.github.com/repos/temporalio/cli/releases/latest" | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))")
+  curl -sL "https://github.com/temporalio/cli/releases/download/v${TEMPORAL_VERSION}/temporal_cli_${TEMPORAL_VERSION}_linux_amd64.tar.gz" | tar -xz -C "$HOME/go/bin/" temporal
+  echo "Temporal CLI installed: $(temporal --version)"
 fi
