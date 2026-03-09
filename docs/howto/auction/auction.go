@@ -77,15 +77,16 @@ func (BiddingInput) DurableKind() string { return "auction.bidding" }
 // --- Public interface ---
 
 // Auction exposes only the methods that external callers should interact with:
-// starting an auction, placing bids, and registering handlers with a worker.
+// starting an auction and placing bids.
 type Auction interface {
 	OpenAuction(ctx *durable.Context, input AuctionInput) (*durable.Continuation[AuctionResult], error)
 	PlaceBid(ctx *durable.Context, input BiddingInput, externalReq PlaceBidReq) (PlaceBidResp, *durable.Continuation[AuctionResult], error)
-	RegisterHandlers(w *durable.Worker)
 }
 
-// NewAuctionService creates a fully functional Auction backed by AuctionService.
-func NewAuctionService() Auction {
+// NewAuctionService creates a fully functional AuctionService.
+// Use it on the worker side to register handlers via RegisterHandlers,
+// and on the client side as an Auction for durable.Go and durable.Call.
+func NewAuctionService() *AuctionService {
 	return &AuctionService{}
 }
 
@@ -106,10 +107,6 @@ func (s *auctionStub) OpenAuction(ctx *durable.Context, input AuctionInput) (*du
 
 func (s *auctionStub) PlaceBid(ctx *durable.Context, input BiddingInput, externalReq PlaceBidReq) (PlaceBidResp, *durable.Continuation[AuctionResult], error) {
 	panic("auctionStub: PlaceBid should not be called directly; use as a typed reference only")
-}
-
-func (s *auctionStub) RegisterHandlers(w *durable.Worker) {
-	panic("auctionStub: use NewAuctionService for handler registration")
 }
 
 // --- Service struct ---
