@@ -83,10 +83,13 @@ type Auction interface {
 	PlaceBid(ctx *durable.Context, input BiddingInput, externalReq PlaceBidReq) (PlaceBidResp, *durable.Continuation[AuctionResult], error)
 }
 
-// NewAuctionService creates a fully functional AuctionService.
-// Use it on the worker side to register handlers via RegisterHandlers,
-// and on the client side as an Auction for durable.Go and durable.Call.
-func NewAuctionService() *AuctionService {
+// AuctionWorker exposes only the methods needed to set up a worker.
+type AuctionWorker interface {
+	RegisterHandlers(w *durable.Worker)
+}
+
+// NewAuctionService creates a fully functional AuctionService for the worker side.
+func NewAuctionService() AuctionWorker {
 	return &AuctionService{}
 }
 
