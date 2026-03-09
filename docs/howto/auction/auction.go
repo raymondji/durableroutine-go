@@ -74,6 +74,44 @@ type BiddingInput struct {
 
 func (BiddingInput) DurableKind() string { return "auction.bidding" }
 
+// --- Public interface ---
+
+// Auction exposes only the methods that external callers should interact with:
+// starting an auction, placing bids, and registering handlers with a worker.
+type Auction interface {
+	OpenAuction(ctx *durable.Context, input AuctionInput) (*durable.Continuation[AuctionResult], error)
+	PlaceBid(ctx *durable.Context, input BiddingInput, externalReq PlaceBidReq) (PlaceBidResp, *durable.Continuation[AuctionResult], error)
+	RegisterHandlers(w *durable.Worker)
+}
+
+// NewAuctionService creates a fully functional Auction backed by AuctionService.
+func NewAuctionService() Auction {
+	return &AuctionService{}
+}
+
+// NewAuctionServiceStub creates a stub Auction whose methods are only used as
+// typed references for durable.Go and durable.Call (which use them for type
+// inference, not invocation). The stub should not be used to register handlers.
+func NewAuctionServiceStub() Auction {
+	return &auctionStub{}
+}
+
+// --- Stub ---
+
+type auctionStub struct{}
+
+func (s *auctionStub) OpenAuction(ctx *durable.Context, input AuctionInput) (*durable.Continuation[AuctionResult], error) {
+	panic("auctionStub: OpenAuction should not be called directly; use as a typed reference only")
+}
+
+func (s *auctionStub) PlaceBid(ctx *durable.Context, input BiddingInput, externalReq PlaceBidReq) (PlaceBidResp, *durable.Continuation[AuctionResult], error) {
+	panic("auctionStub: PlaceBid should not be called directly; use as a typed reference only")
+}
+
+func (s *auctionStub) RegisterHandlers(w *durable.Worker) {
+	panic("auctionStub: use NewAuctionService for handler registration")
+}
+
 // --- Service struct ---
 
 type AuctionService struct {
@@ -166,10 +204,10 @@ func (s *AuctionService) CloseAuction(ctx *durable.Context, input BiddingInput) 
 }
 
 // RegisterHandlers registers all auction handlers with the worker.
-func RegisterHandlers(w *durable.Worker, svc *AuctionService) {
-	durable.RegisterHandler(w, svc.OpenAuction, durable.HandlerOptions{})
-	durable.RegisterCallHandler(w, svc.PlaceBid, durable.HandlerOptions{
+func (s *AuctionService) RegisterHandlers(w *durable.Worker) {
+	durable.RegisterHandler(w, s.OpenAuction, durable.HandlerOptions{})
+	durable.RegisterCallHandler(w, s.PlaceBid, durable.HandlerOptions{
 		RetryPolicy: durable.RetryPolicy{MaxAttempts: 3},
-	}).WithRecoveryHandler(svc.BidFailed, durable.HandlerOptions{})
-	durable.RegisterHandler(w, svc.CloseAuction, durable.HandlerOptions{})
+	}).WithRecoveryHandler(s.BidFailed, durable.HandlerOptions{})
+	durable.RegisterHandler(w, s.CloseAuction, durable.HandlerOptions{})
 }

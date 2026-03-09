@@ -11,15 +11,16 @@ import (
 )
 
 func TestAuctionBidAcceptReject(t *testing.T) {
-	svc := &auction.AuctionService{}
+	svc := auction.NewAuctionService()
+	stub := auction.NewAuctionServiceStub()
 	testenv.RunAll(t, func(w *durable.Worker) {
-		auction.RegisterHandlers(w, svc)
+		svc.RegisterHandlers(w)
 	}, func(t *testing.T, env *testenv.Env) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
 		id := env.UniqueID("auction-bids")
-		h, err := durable.Go(env.Client, ctx, id, svc.OpenAuction, auction.AuctionInput{
+		h, err := durable.Go(env.Client, ctx, id, stub.OpenAuction, auction.AuctionInput{
 			ItemName:    "Vintage Watch",
 			StartingBid: 100.0,
 			Duration:    30 * time.Second,
@@ -31,7 +32,7 @@ func TestAuctionBidAcceptReject(t *testing.T) {
 		time.Sleep(2 * time.Second)
 
 		// Bid $150 — should be accepted
-		resp, err := durable.Call(env.Client, ctx, id, svc.PlaceBid, auction.PlaceBidReq{
+		resp, err := durable.Call(env.Client, ctx, id, stub.PlaceBid, auction.PlaceBidReq{
 			BidderID: "alice", Amount: 150.0,
 		})
 		if err != nil {
@@ -44,7 +45,7 @@ func TestAuctionBidAcceptReject(t *testing.T) {
 		time.Sleep(1 * time.Second)
 
 		// Bid $120 — should be rejected (lower than current $150)
-		resp, err = durable.Call(env.Client, ctx, id, svc.PlaceBid, auction.PlaceBidReq{
+		resp, err = durable.Call(env.Client, ctx, id, stub.PlaceBid, auction.PlaceBidReq{
 			BidderID: "bob", Amount: 120.0,
 		})
 		if err != nil {
@@ -57,7 +58,7 @@ func TestAuctionBidAcceptReject(t *testing.T) {
 		time.Sleep(1 * time.Second)
 
 		// Bid $200 — should be accepted
-		resp, err = durable.Call(env.Client, ctx, id, svc.PlaceBid, auction.PlaceBidReq{
+		resp, err = durable.Call(env.Client, ctx, id, stub.PlaceBid, auction.PlaceBidReq{
 			BidderID: "bob", Amount: 200.0,
 		})
 		if err != nil {
@@ -87,14 +88,15 @@ func TestAuctionBidAcceptReject(t *testing.T) {
 }
 
 func TestAuctionNoBids(t *testing.T) {
-	svc := &auction.AuctionService{}
+	svc := auction.NewAuctionService()
+	stub := auction.NewAuctionServiceStub()
 	testenv.RunAll(t, func(w *durable.Worker) {
-		auction.RegisterHandlers(w, svc)
+		svc.RegisterHandlers(w)
 	}, func(t *testing.T, env *testenv.Env) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		h, err := durable.Go(env.Client, ctx, env.UniqueID("auction-nobids"), svc.OpenAuction, auction.AuctionInput{
+		h, err := durable.Go(env.Client, ctx, env.UniqueID("auction-nobids"), stub.OpenAuction, auction.AuctionInput{
 			ItemName:    "Empty Auction",
 			StartingBid: 50.0,
 			Duration:    1 * time.Millisecond,
