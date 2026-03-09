@@ -88,8 +88,8 @@ type AuctionWorker interface {
 	RegisterHandlers(w *durable.Worker)
 }
 
-// NewAuctionService creates a fully functional AuctionService for the worker side.
-func NewAuctionService() AuctionWorker {
+// NewAuctionWorker creates a fully functional AuctionWorker for the worker side.
+func NewAuctionWorker() AuctionWorker {
 	return &AuctionService{}
 }
 

@@ -11,7 +11,7 @@ import (
 )
 
 func TestAuctionBidAcceptReject(t *testing.T) {
-	svc := auction.NewAuctionService()
+	svc := auction.NewAuctionWorker()
 	stub := auction.NewAuctionServiceStub()
 	testenv.RunAll(t, func(w *durable.Worker) {
 		svc.RegisterHandlers(w)
@@ -88,7 +88,7 @@ func TestAuctionBidAcceptReject(t *testing.T) {
 }
 
 func TestAuctionNoBids(t *testing.T) {
-	svc := auction.NewAuctionService()
+	svc := auction.NewAuctionWorker()
 	stub := auction.NewAuctionServiceStub()
 	testenv.RunAll(t, func(w *durable.Worker) {
 		svc.RegisterHandlers(w)
