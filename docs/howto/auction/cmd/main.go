@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	svc := auction.NewAuctionWorker()
+	svc := auction.NewAuctionRegistry()
 	stub := auction.NewAuctionServiceStub()
 
 	w := durable.NewWorker("auction-queue")

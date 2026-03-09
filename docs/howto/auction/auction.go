@@ -83,13 +83,13 @@ type Auction interface {
 	PlaceBid(ctx *durable.Context, input BiddingInput, externalReq PlaceBidReq) (PlaceBidResp, *durable.Continuation[AuctionResult], error)
 }
 
-// AuctionWorker exposes only the methods needed to set up a worker.
-type AuctionWorker interface {
+// AuctionRegistry exposes only the methods needed to register handlers with a worker.
+type AuctionRegistry interface {
 	RegisterHandlers(w *durable.Worker)
 }
 
-// NewAuctionWorker creates a fully functional AuctionWorker for the worker side.
-func NewAuctionWorker() AuctionWorker {
+// NewAuctionRegistry creates a fully functional AuctionRegistry for the worker side.
+func NewAuctionRegistry() AuctionRegistry {
 	return &AuctionService{}
 }
 
